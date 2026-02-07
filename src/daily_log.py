@@ -21,7 +21,7 @@ from collectors import ALL as COLLECTORS
 
 CONFIG_DIR = Path.home() / ".config" / "daily-log"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-LOGS_DIR = Path.home() / "daily-logs"
+LOGS_DIR = Path(__file__).resolve().parent.parent / "reports"
 
 DEFAULT_CONFIG = {
     "github_token": "",
@@ -149,20 +149,6 @@ def _has_changes(log_file: Path, raw: str) -> bool:
         return True
 
 
-def _has_activity(collected_data: list) -> bool:
-    for source in collected_data:
-        if source.get("status") == "skipped" or "error" in source:
-            continue
-        name = source.get("source", "")
-        if name == "github" and (source.get("commits") or source.get("events")):
-            return True
-        if name == "shortcut" and (source.get("stories_completed") or source.get("stories_updated")):
-            return True
-        if name == "git_local" and source.get("repos"):
-            return True
-    return False
-
-
 def _fallback_summary(date: str, collected_data: list) -> str:
     lines = [f"## Registro del dia — {date}\n"]
 
@@ -183,7 +169,8 @@ def _fallback_summary(date: str, collected_data: list) -> str:
         elif name == "shortcut":
             completed = source.get("stories_completed", [])
             updated = source.get("stories_updated", [])
-            if completed or updated:
+            epics = source.get("epics_updated", [])
+            if completed or updated or epics:
                 lines.append("### Shortcut\n")
                 if completed:
                     lines.append("**Completadas:**")
@@ -195,6 +182,10 @@ def _fallback_summary(date: str, collected_data: list) -> str:
                         lines.append(
                             f"- [{s['type']}] {s['name']} (#{s['id']}) — {s['workflow_state']}"
                         )
+                if epics:
+                    lines.append("**Epics:**")
+                    for e in epics:
+                        lines.append(f"- {e['name']} (#{e['id']}) — {e['state']}")
                 lines.append("")
 
         elif name == "git_local":
@@ -216,17 +207,30 @@ def _fallback_summary(date: str, collected_data: list) -> str:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Daily Log Generator")
+    parser = argparse.ArgumentParser(
+        prog="daily-log",
+        description="Recopila actividad diaria de GitHub, Shortcut y git local, y genera un resumen con Claude.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Ejemplos:\n"
+               "  daily-log                    Generar log de hoy\n"
+               "  daily-log --date 2026-02-05  Log de una fecha concreta\n"
+               "  daily-log --dry-run          Ver datos sin generar archivo\n"
+               "  daily-log --clear            Borrar log de hoy y regenerar\n"
+               "  daily-log --no-ai            Log sin resumen de Claude\n"
+               "  daily-log --setup            Configurar tokens y repos",
+    )
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),
-                        help="Fecha del log (YYYY-MM-DD)")
+                        help="fecha del log (default: hoy)")
     parser.add_argument("--no-ai", action="store_true",
-                        help="Generar log sin resumen de AI")
-    parser.add_argument("--output-dir", default=str(LOGS_DIR),
-                        help=f"Directorio de salida (default: {LOGS_DIR})")
+                        help="generar log sin resumen de Claude")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Mostrar datos recopilados sin generar el log")
+                        help="mostrar datos recopilados sin generar archivo")
+    parser.add_argument("--clear", action="store_true",
+                        help="borrar el log del dia para regenerarlo")
     parser.add_argument("--setup", action="store_true",
-                        help="Ejecutar el setup interactivo")
+                        help="configurar tokens y repos")
+    parser.add_argument("--output-dir", default=str(LOGS_DIR),
+                        help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if args.setup:
@@ -235,6 +239,18 @@ def main():
 
     date = args.date
     output_dir = Path(args.output_dir)
+
+    if args.clear:
+        year_month = date[:7].replace("-", "/")
+        log_file = output_dir / year_month / f"{date}.md"
+        short_path = str(log_file).replace(str(Path.home()), "~")
+        if log_file.exists():
+            log_file.unlink()
+            ui.done(f"Log borrado: {short_path}")
+        else:
+            ui.info(f"No existe log para {date}")
+        return
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ui.header(f"daily-log {ui.dim(date)}")
@@ -296,48 +312,43 @@ def main():
     log_file = log_dir / f"{date}.md"
     short_path = str(log_file).replace(str(Path.home()), "~")
 
-    # Comprobar si hay datos nuevos
-    has_data = _has_activity(collected)
-
     raw = json.dumps(collected, indent=2, ensure_ascii=False)
 
     if log_file.exists() and not _has_changes(log_file, raw):
-        ui.separator()
-        ui.info(f"Sin cambios nuevos. Log existente: {short_path}")
+        ui.info(f"Sin cambios nuevos: {short_path}")
+        return
+
+    # Generar resumen
+    ui.separator()
+    if args.no_ai:
+        summary = _fallback_summary(date, collected)
     else:
-        # Generar resumen
-        ui.separator()
-        if args.no_ai:
-            ui.run("Generando log (sin AI)...")
-            summary = _fallback_summary(date, collected)
-        else:
-            ui.run("Generando resumen con Claude...")
-            summary = generate_summary(config, date, collected)
+        ui.run("Generando resumen con Claude...")
+        summary = generate_summary(config, date, collected)
 
-        # Guardar
-        log_dir.mkdir(parents=True, exist_ok=True)
+    # Guardar
+    log_dir.mkdir(parents=True, exist_ok=True)
+    output = (
+        summary
+        + "\n\n---\n\n"
+        + "<details>\n<summary>Datos crudos</summary>\n\n"
+        + f"```json\n{raw}\n```\n\n"
+        + "</details>\n"
+    )
+    log_file.write_text(output)
 
-        output = (
-            summary
-            + "\n\n---\n\n"
-            + "<details>\n<summary>Datos crudos</summary>\n\n"
-            + f"```json\n{raw}\n```\n\n"
-            + "</details>\n"
-        )
-
-        log_file.write_text(output)
-        ui.done(f"Log guardado: {short_path}")
-
-    # Ofrecer abrir
-    if log_file.exists():
-        print()
-        try:
-            choice = input(f"  {ui.dim('Abrir? (s/n)')} [{ui.dim('s')}]: ").strip()
-            if choice.lower() not in ("n", "no"):
-                import subprocess
-                subprocess.Popen(["open", str(log_file)])
-        except (KeyboardInterrupt, EOFError):
-            pass
+    # Mostrar actividad destacada
+    printing = False
+    for line in summary.split("\n"):
+        if line.startswith("### Actividad destacada"):
+            printing = True
+            continue
+        elif line.startswith("#"):
+            printing = False
+        if printing and line.strip():
+            print(f"  {line.strip()}")
+    print()
+    ui.done(short_path)
 
 
 if __name__ == "__main__":
