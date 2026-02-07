@@ -1,0 +1,6 @@
+#!/bin/bash
+# daily-log — wrapper para ejecutar el daily log generator
+# Uso: ./daily-log [--date YYYY-MM-DD] [--no-ai] [--dry-run]
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+python3 "$SCRIPT_DIR/src/daily_log.py" "$@"
