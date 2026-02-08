@@ -1,5 +1,6 @@
 """HTTP helpers para daily-log."""
 
+import base64
 import json
 import urllib.request
 from typing import Optional, Union
@@ -24,4 +25,11 @@ def shortcut(path: str, token: str) -> Union[dict, list]:
     return fetch(f"https://api.app.shortcut.com/api/v3/{path}", {
         "Shortcut-Token": token,
         "Content-Type": "application/json",
+    })
+
+
+def wakatime(path: str, api_key: str) -> Union[dict, list]:
+    encoded = base64.b64encode(f"{api_key}:".encode()).decode()
+    return fetch(f"https://api.wakatime.com/api/v1/{path}", {
+        "Authorization": f"Basic {encoded}",
     })

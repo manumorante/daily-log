@@ -21,6 +21,7 @@ DEFAULT_CONFIG = {
     "github_username": "",
     "shortcut_token": "",
     "anthropic_api_key": "",
+    "wakatime_api_key": "",
     "git_repos": [],
     "anthropic_model": "claude-sonnet-4-5-20250929",
 }
@@ -98,6 +99,15 @@ def setup_anthropic(config: dict):
     print()
 
 
+def setup_wakatime(config: dict):
+    """Configura WakaTime."""
+    print(f"  {ui.dim('WakaTime')}")
+    config["wakatime_api_key"] = ask(
+        "WakaTime API key", config.get("wakatime_api_key", ""), secret=True
+    ) or config.get("wakatime_api_key", "")
+    print()
+
+
 def setup_repos(config: dict):
     """Configura repos locales."""
     print(f"  {ui.dim('Git repos locales')}")
@@ -132,6 +142,7 @@ SECTIONS = [
     ("GitHub", "github", lambda c: bool(c.get("github_token") and c.get("github_username")), setup_github),
     ("Shortcut", "shortcut", lambda c: bool(c.get("shortcut_token")), setup_shortcut),
     ("Claude API", "anthropic", lambda c: bool(c.get("anthropic_api_key")), setup_anthropic),
+    ("WakaTime", "wakatime", lambda c: bool(c.get("wakatime_api_key")), setup_wakatime),
     ("Git repos", "repos", lambda c: bool(c.get("git_repos")), setup_repos),
 ]
 

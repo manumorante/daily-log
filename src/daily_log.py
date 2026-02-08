@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
     "github_username": "",
     "shortcut_token": "",
     "anthropic_api_key": "",
+    "wakatime_api_key": "",
     "git_repos": [],
     "anthropic_model": "claude-sonnet-4-5-20250929",
 }
@@ -48,6 +49,7 @@ def load_config() -> dict:
         "GITHUB_USERNAME": "github_username",
         "SHORTCUT_TOKEN": "shortcut_token",
         "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "WAKATIME_API_KEY": "wakatime_api_key",
     }
     for env_key, config_key in env_map.items():
         val = os.environ.get(env_key)
