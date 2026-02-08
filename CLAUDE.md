@@ -49,6 +49,10 @@ Stored at `~/.config/daily-log/config.json`. Env vars override config values:
 
 Objetivo: unificar la salida de todos los collectors en un formato estandar de eventos. Cada collector devolvera una lista de eventos con campos comunes (type, timestamp, source, title, meta) en vez de estructuras ad-hoc. Esto simplifica el summarizer y permite agregar nuevas fuentes sin tocar el core.
 
+## Reports
+
+Reports in `reports/` are the primary output and purpose of this project. NEVER delete, overwrite, or discard report files. When committing, always preserve existing reports. If a report appears deleted in git status, restore it — do not stage the deletion.
+
 ## Style
 
 - Sin emojis. UI con colores pastel y simbolos unicode.
