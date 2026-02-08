@@ -19,6 +19,10 @@ Every collector SHALL return a list of event dicts. Each event MUST contain: `ty
 - **WHEN** shortcut collector finds an epic updated today
 - **THEN** it returns `{"type": "epic", "timestamp": "2026-02-07T11:25:00Z", "source": "shortcut", "title": "Onboard AI to Project", "meta": {"id": 2982, "state": "in progress"}}`
 
+#### Scenario: Claude Code session event
+- **WHEN** claude_code collector finds a session in project `founderz` with 12 messages from 02:19 to 03:40
+- **THEN** it returns `{"type": "claude_session", "timestamp": "2026-02-07T02:19:00+01:00", "source": "claude_code", "title": "reescribir CLAUDE.md del proyecto", "meta": {"project": "founderz", "session_id": "6d2eae38", "message_count": 12, "end_time": "2026-02-07T03:40:00+01:00"}}`
+
 ### Requirement: Collector return format
 Each collector SHALL return a dict with `source` (str) and `events` (list of event dicts). If skipped, it SHALL return `{"source": "...", "status": "skipped", "reason": "..."}`.
 
