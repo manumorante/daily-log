@@ -1,23 +1,11 @@
-"""Collector de stories y epics en Shortcut."""
+"""Collector for Shortcut stories and epics."""
 
 import urllib.parse
 from api import shortcut
 
 
-def _member_touched_story(story_id: int, member_id: str, date: str, token: str) -> bool:
-    """Comprueba si el member hizo algun cambio en la story en la fecha dada."""
-    try:
-        history = shortcut(f"stories/{story_id}/history", token)
-        for entry in history:
-            if entry.get("member_id") == member_id and entry.get("changed_at", "")[:10] == date:
-                return True
-    except Exception:
-        pass
-    return False
-
-
 def _resolve_member_id(config: dict, token: str) -> str:
-    """Obtiene el member_id del config o lo autodetecta desde la API."""
+    """Get member_id from config or auto-detect from API."""
     mid = config.get("shortcut_member_id", "")
     if mid:
         return mid
@@ -28,57 +16,83 @@ def _resolve_member_id(config: dict, token: str) -> str:
         return ""
 
 
+def _member_changes(story_id: int, member_id: str, date: str, token: str) -> list:
+    """Return list of changed_at timestamps for this member on the given date."""
+    timestamps = []
+    try:
+        history = shortcut(f"stories/{story_id}/history", token)
+        for entry in history:
+            if entry.get("member_id") == member_id and entry.get("changed_at", "")[:10] == date:
+                timestamps.append(entry["changed_at"])
+    except Exception:
+        pass
+    return timestamps
+
+
 def collect_shortcut(config: dict, date: str) -> dict:
     token = config.get("shortcut_token")
     if not token:
         return {"source": "shortcut", "status": "skipped", "reason": "no token"}
 
     member_id = _resolve_member_id(config, token)
-    results = {"source": "shortcut", "stories_updated": [], "stories_completed": [], "epics_updated": []}
+    events = []
 
     try:
-        # Mapa de estados (id -> nombre)
+        # State map (id -> name)
         state_map = {}
         for wf in shortcut("workflows", token):
             for s in wf.get("states", []):
                 state_map[s["id"]] = s["name"]
 
-        # Stories actualizadas hoy (todas)
+        # Stories updated today
         query = urllib.parse.quote(f"updated:{date}")
         data = shortcut(f"search/stories?query={query}", token)
 
         for story in data.get("data", []):
             story_id = story.get("id")
 
-            # Filtrar: solo stories que yo toque
-            if member_id and not _member_touched_story(story_id, member_id, date, token):
-                continue
+            # Filter: only stories this member touched
+            if member_id:
+                changes = _member_changes(story_id, member_id, date, token)
+                if not changes:
+                    continue
+                ts = changes[0]
+            else:
+                ts = story.get("updated_at", "")
 
             state_id = story.get("workflow_state_id")
-            info = {
-                "id": story_id,
-                "name": story.get("name", ""),
-                "type": story.get("story_type", ""),
-                "workflow_state": state_map.get(state_id, str(state_id) if state_id else "unknown"),
-            }
+            completed = story.get("completed") and story.get("completed_at", "")[:10] == date
 
-            if story.get("completed") and story.get("completed_at", "")[:10] == date:
-                results["stories_completed"].append(info)
-            else:
-                results["stories_updated"].append(info)
+            events.append({
+                "type": "story",
+                "timestamp": ts,
+                "source": "shortcut",
+                "title": story.get("name", ""),
+                "meta": {
+                    "id": story_id,
+                    "story_type": story.get("story_type", ""),
+                    "workflow_state": state_map.get(state_id, str(state_id) if state_id else "unknown"),
+                    "completed": completed,
+                },
+            })
 
-        # Epics actualizados hoy
+        # Epics updated today
         epic_query = urllib.parse.quote(f"updated:{date}")
         epic_data = shortcut(f"search/epics?query={epic_query}", token)
 
         for epic in epic_data.get("data", []):
-            results["epics_updated"].append({
-                "id": epic.get("id"),
-                "name": epic.get("name", ""),
-                "state": epic.get("state", ""),
+            events.append({
+                "type": "epic",
+                "timestamp": epic.get("updated_at", ""),
+                "source": "shortcut",
+                "title": epic.get("name", ""),
+                "meta": {
+                    "id": epic.get("id"),
+                    "state": epic.get("state", ""),
+                },
             })
 
     except Exception as e:
-        results["error"] = str(e)
+        return {"source": "shortcut", "events": [], "error": str(e)}
 
-    return results
+    return {"source": "shortcut", "events": events}

@@ -1,27 +1,61 @@
-"""Collector de actividad en GitHub."""
+"""Collector for GitHub activity."""
 
 import urllib.error
 from api import github
 
-# Parsers por tipo de evento — {EventType: extractor(repo, payload) -> list[dict]}
+
+def _parse_push(repo, payload, ts):
+    return [
+        {
+            "type": "commit",
+            "timestamp": ts,
+            "source": "github",
+            "title": c.get("message", "").split("\n")[0],
+            "meta": {"sha": c.get("sha", "")[:7], "repo": repo},
+        }
+        for c in payload.get("commits", [])
+    ]
+
+
+def _parse_pr(repo, payload, ts):
+    return [{
+        "type": "pr",
+        "timestamp": ts,
+        "source": "github",
+        "title": payload.get("pull_request", {}).get("title", ""),
+        "meta": {
+            "action": payload.get("action", ""),
+            "repo": repo,
+            "number": payload.get("pull_request", {}).get("number"),
+        },
+    }]
+
+
+def _parse_issue(repo, payload, ts):
+    return [{
+        "type": "issue",
+        "timestamp": ts,
+        "source": "github",
+        "title": payload.get("issue", {}).get("title", ""),
+        "meta": {"action": payload.get("action", ""), "repo": repo},
+    }]
+
+
+def _parse_review(repo, payload, ts):
+    return [{
+        "type": "review",
+        "timestamp": ts,
+        "source": "github",
+        "title": payload.get("pull_request", {}).get("title", ""),
+        "meta": {"repo": repo},
+    }]
+
+
 _PARSERS = {
-    "PushEvent": lambda repo, p: [
-        {"type": "commit", "repo": repo, "sha": c.get("sha", "")[:7],
-         "message": c.get("message", "").split("\n")[0]}
-        for c in p.get("commits", [])
-    ],
-    "PullRequestEvent": lambda repo, p: [{
-        "type": "PR", "action": p.get("action", ""),
-        "repo": repo, "title": p.get("pull_request", {}).get("title", ""),
-    }],
-    "IssuesEvent": lambda repo, p: [{
-        "type": "Issue", "action": p.get("action", ""),
-        "repo": repo, "title": p.get("issue", {}).get("title", ""),
-    }],
-    "PullRequestReviewEvent": lambda repo, p: [{
-        "type": "Review", "repo": repo,
-        "title": p.get("pull_request", {}).get("title", ""),
-    }],
+    "PushEvent": _parse_push,
+    "PullRequestEvent": _parse_pr,
+    "IssuesEvent": _parse_issue,
+    "PullRequestReviewEvent": _parse_review,
 }
 
 
@@ -30,13 +64,14 @@ def collect_github(config: dict, date: str) -> dict:
     if not token or not username:
         return {"source": "github", "status": "skipped", "reason": "no token/username"}
 
-    results = {"source": "github", "events": [], "commits": []}
+    events = []
 
     try:
-        events = github(f"users/{username}/events?per_page=100", token)
+        raw_events = github(f"users/{username}/events?per_page=100", token)
 
-        for event in events:
-            if event.get("created_at", "")[:10] != date:
+        for event in raw_events:
+            ts = event.get("created_at", "")
+            if ts[:10] != date:
                 continue
 
             parser = _PARSERS.get(event["type"])
@@ -44,13 +79,9 @@ def collect_github(config: dict, date: str) -> dict:
                 continue
 
             repo = event.get("repo", {}).get("name", "")
-            for item in parser(repo, event.get("payload", {})):
-                if item["type"] == "commit":
-                    results["commits"].append(item)
-                else:
-                    results["events"].append(item)
+            events.extend(parser(repo, event.get("payload", {}), ts))
 
     except urllib.error.URLError as e:
-        results["error"] = str(e)
+        return {"source": "github", "events": [], "error": str(e)}
 
-    return results
+    return {"source": "github", "events": events}

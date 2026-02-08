@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Daily Log Generator
-Recopila actividad diaria de multiples fuentes y genera un resumen con Claude.
+Collects daily developer activity from multiple sources and generates a summary with Claude.
 """
 
 import os
@@ -11,7 +11,7 @@ import urllib.error
 from datetime import datetime
 from pathlib import Path
 
-# Imports locales
+# Local imports
 sys.path.insert(0, str(Path(__file__).parent))
 import ui
 from api import fetch
@@ -37,8 +37,8 @@ def load_config() -> dict:
     if not CONFIG_FILE.exists():
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(DEFAULT_CONFIG, indent=2))
-        ui.warn(f"Config creada en: {CONFIG_FILE}")
-        ui.info("Ejecuta: ./daily-log --setup")
+        ui.warn(f"Config created at: {CONFIG_FILE}")
+        ui.info("Run: daily-log --setup")
         sys.exit(1)
 
     config = json.loads(CONFIG_FILE.read_text())
@@ -59,47 +59,55 @@ def load_config() -> dict:
 
 # ─── Summarizer ──────────────────────────────────────────────────────────────
 
-SUMMARY_PROMPT = """Eres un asistente que genera resumenes diarios de actividad de un desarrollador.
+SUMMARY_PROMPT = """You are an assistant that analyzes daily developer activity.
 
-Te voy a dar datos en JSON de diferentes fuentes (GitHub, Shortcut, git local).
-Genera un resumen en Markdown del dia con estas secciones:
+You will receive a JSON array of events from different sources (GitHub, Shortcut, local git).
+Each event has: type, timestamp, source, title, meta.
 
-## Resumen del dia — {date}
+Respond with ONLY a valid JSON object (no markdown, no explanation) with this exact schema:
 
-### Actividad destacada
-Un parrafo breve de 2-3 frases resumiendo lo mas importante del dia.
+{{
+  "highlight": "2-3 sentence summary of the most important activity of the day. Write in Spanish.",
+  "code": [
+    {{"group": "group name", "items": ["commit description 1", "commit description 2"]}}
+  ],
+  "tasks": [
+    {{"id": 123, "name": "task name", "status": "in_progress|completed", "note": "optional observation"}}
+  ],
+  "patterns": ["observation about work patterns, sessions, or trends"],
+  "risks": ["risk or concern identified from the data"]
+}}
 
-### Codigo
-- Commits relevantes agrupados por repo
-- PRs creadas/mergeadas/revisadas
+Rules:
+- Write all text content in Spanish
+- Group related commits together in "code" (don't list merge commits individually)
+- "tasks" comes from Shortcut story events
+- "patterns" should note temporal patterns (e.g., intense sessions, long-running tasks)
+- "risks" should flag concerns (e.g., stories stuck too long, no reviews)
+- Empty sections must be empty arrays [], never omit keys
+- Respond with ONLY the JSON object, nothing else
 
-### Tareas (Shortcut)
-- Stories completadas
-- Stories en progreso
-
-### Notas
-- Cualquier observacion relevante sobre patrones de trabajo
-
-Reglas:
-- Escribe en espanol
-- Se conciso, no repitas info
-- Si una seccion esta vacia, omitela
-- Los commits de merge o triviales no hace falta listarlos individualmente
-- Agrupa commits relacionados
+Events for {date}:
 """
 
 
-def generate_summary(config: dict, date: str, collected_data: list) -> str:
+def _collect_events(collected: list) -> list:
+    """Extract all events from collected data into a flat list."""
+    events = []
+    for source in collected:
+        events.extend(source.get("events", []))
+    return events
+
+
+def generate_summary(config: dict, date: str, events: list) -> dict:
     api_key = config.get("anthropic_api_key")
     if not api_key:
-        return _fallback_summary(date, collected_data)
+        return _fallback_summary(events)
 
     model = config.get("anthropic_model", "claude-sonnet-4-5-20250929")
     prompt = (
         SUMMARY_PROMPT.replace("{date}", date)
-        + "\n\nDatos del dia:\n```json\n"
-        + json.dumps(collected_data, indent=2, ensure_ascii=False)
-        + "\n```"
+        + json.dumps(events, indent=2, ensure_ascii=False)
     )
 
     try:
@@ -116,29 +124,127 @@ def generate_summary(config: dict, date: str, collected_data: list) -> str:
                 "messages": [{"role": "user", "content": prompt}],
             }).encode("utf-8"),
         )
-        return "\n".join(
+        text = "\n".join(
             b["text"] for b in result.get("content", []) if b.get("type") == "text"
-        )
+        ).strip()
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]  # remove first line (```json)
+            text = text.rsplit("```", 1)[0]  # remove closing ```
+        return json.loads(text.strip())
 
+    except (json.JSONDecodeError, KeyError):
+        ui.err("Claude returned invalid JSON, using fallback")
+        return _fallback_summary(events)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         try:
             detail = json.loads(body).get("error", {}).get("message", body)
         except Exception:
             detail = body
-        ui.err(f"API Claude: {e.code} {e.reason}")
+        ui.err(f"Claude API: {e.code} {e.reason}")
         ui.info(detail)
-        return _fallback_summary(date, collected_data)
+        return _fallback_summary(events)
     except Exception as e:
-        ui.err(f"API Claude: {e}")
-        return _fallback_summary(date, collected_data)
+        ui.err(f"Claude API: {e}")
+        return _fallback_summary(events)
+
+
+def _fallback_summary(events: list) -> dict:
+    """Generate the same JSON schema from raw events without AI."""
+    code_by_repo = {}
+    tasks = []
+
+    for ev in events:
+        t = ev.get("type", "")
+        meta = ev.get("meta", {})
+
+        if t == "commit":
+            repo = meta.get("repo", "unknown")
+            code_by_repo.setdefault(repo, []).append(ev.get("title", ""))
+        elif t in ("pr", "issue", "review"):
+            repo = meta.get("repo", "unknown")
+            code_by_repo.setdefault(repo, []).append(
+                f"{t.upper()}: {ev.get('title', '')}"
+            )
+        elif t == "story":
+            status = "completed" if meta.get("completed") else "in_progress"
+            tasks.append({
+                "id": meta.get("id"),
+                "name": ev.get("title", ""),
+                "status": status,
+                "note": meta.get("workflow_state", ""),
+            })
+        elif t == "epic":
+            tasks.append({
+                "id": meta.get("id"),
+                "name": ev.get("title", ""),
+                "status": meta.get("state", ""),
+                "note": "epic",
+            })
+
+    code = [{"group": repo, "items": items} for repo, items in code_by_repo.items()]
+
+    return {
+        "highlight": "",
+        "code": code,
+        "tasks": tasks,
+        "patterns": [],
+        "risks": [],
+    }
+
+
+def _render_markdown(date: str, summary: dict) -> str:
+    """Render a summary JSON dict into a markdown report."""
+    lines = [f"## Daily report — {date}\n"]
+
+    highlight = summary.get("highlight", "")
+    if highlight:
+        lines.append(highlight)
+        lines.append("")
+
+    patterns = summary.get("patterns", [])
+    risks = summary.get("risks", [])
+    if patterns or risks:
+        for p in patterns:
+            lines.append(f"- {p}")
+        for r in risks:
+            lines.append(f"- **Risk:** {r}")
+        lines.append("")
+
+    tasks = summary.get("tasks", [])
+    if tasks:
+        done = [t for t in tasks if t.get("status") == "completed"]
+        active = [t for t in tasks if t.get("status") != "completed"]
+        if done:
+            lines.append("### Completed\n")
+            for t in done:
+                note = f" — {t['note']}" if t.get("note") else ""
+                lines.append(f"- {t.get('name', '')} (#{t.get('id', '')}){note}")
+            lines.append("")
+        if active:
+            lines.append("### In progress\n")
+            for t in active:
+                note = f" — {t['note']}" if t.get("note") else ""
+                lines.append(f"- {t.get('name', '')} (#{t.get('id', '')}){note}")
+            lines.append("")
+
+    code = summary.get("code", [])
+    if code:
+        lines.append("### Code\n")
+        for group in code:
+            lines.append(f"**{group['group']}**")
+            for item in group.get("items", []):
+                lines.append(f"- {item}")
+            lines.append("")
+
+    return "\n".join(lines)
 
 
 def _has_changes(log_file: Path, raw: str) -> bool:
-    """Compara datos crudos actuales con los del log existente."""
+    """Compare current raw data with the existing log."""
     try:
         content = log_file.read_text()
-        # Extraer JSON del bloque <details>
         start = content.find("```json\n")
         end = content.find("\n```\n\n</details>")
         if start == -1 or end == -1:
@@ -149,58 +255,6 @@ def _has_changes(log_file: Path, raw: str) -> bool:
         return True
 
 
-def _fallback_summary(date: str, collected_data: list) -> str:
-    lines = [f"## Registro del dia — {date}\n"]
-
-    for source in collected_data:
-        name = source.get("source", "unknown")
-
-        if name == "github":
-            commits = source.get("commits", [])
-            events = source.get("events", [])
-            if commits or events:
-                lines.append("### GitHub\n")
-                for c in commits:
-                    lines.append(f"- `{c['sha']}` {c['message']} ({c['repo']})")
-                for e in events:
-                    lines.append(f"- {e['type']}: {e.get('title', '')} ({e['repo']})")
-                lines.append("")
-
-        elif name == "shortcut":
-            completed = source.get("stories_completed", [])
-            updated = source.get("stories_updated", [])
-            epics = source.get("epics_updated", [])
-            if completed or updated or epics:
-                lines.append("### Shortcut\n")
-                if completed:
-                    lines.append("**Completadas:**")
-                    for s in completed:
-                        lines.append(f"- [{s['type']}] {s['name']} (#{s['id']})")
-                if updated:
-                    lines.append("**En progreso:**")
-                    for s in updated:
-                        lines.append(
-                            f"- [{s['type']}] {s['name']} (#{s['id']}) — {s['workflow_state']}"
-                        )
-                if epics:
-                    lines.append("**Epics:**")
-                    for e in epics:
-                        lines.append(f"- {e['name']} (#{e['id']}) — {e['state']}")
-                lines.append("")
-
-        elif name == "git_local":
-            repos = source.get("repos", [])
-            if repos:
-                lines.append("### Git Local\n")
-                for repo in repos:
-                    lines.append(f"**{repo['name']}**")
-                    for c in repo.get("commits", []):
-                        lines.append(f"- `{c['sha']}` {c['message']}")
-                lines.append("")
-
-    return "\n".join(lines)
-
-
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 
@@ -209,26 +263,26 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="daily-log",
-        description="Recopila actividad diaria de GitHub, Shortcut y git local, y genera un resumen con Claude.",
+        description="Collect daily developer activity from GitHub, Shortcut and local git, and generate a summary with Claude.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Ejemplos:\n"
-               "  daily-log                    Generar log de hoy\n"
-               "  daily-log --date 2026-02-05  Log de una fecha concreta\n"
-               "  daily-log --dry-run          Ver datos sin generar archivo\n"
-               "  daily-log --clear            Borrar log de hoy y regenerar\n"
-               "  daily-log --no-ai            Log sin resumen de Claude\n"
-               "  daily-log --setup            Configurar tokens y repos",
+        epilog="Examples:\n"
+               "  daily-log                    Generate today's report\n"
+               "  daily-log --date 2026-02-05  Report for a specific date\n"
+               "  daily-log --dry-run          Show collected data only\n"
+               "  daily-log --clear            Delete today's report\n"
+               "  daily-log --no-ai            Report without Claude summary\n"
+               "  daily-log --setup            Configure tokens and repos",
     )
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),
-                        help="fecha del log (default: hoy)")
+                        help="report date (default: today)")
     parser.add_argument("--no-ai", action="store_true",
-                        help="generar log sin resumen de Claude")
+                        help="generate report without Claude summary")
     parser.add_argument("--dry-run", action="store_true",
-                        help="mostrar datos recopilados sin generar archivo")
+                        help="show collected events without generating report")
     parser.add_argument("--clear", action="store_true",
-                        help="borrar el log del dia para regenerarlo")
+                        help="delete the report for the given date")
     parser.add_argument("--setup", action="store_true",
-                        help="configurar tokens y repos")
+                        help="configure tokens and repos")
     parser.add_argument("--output-dir", default=str(LOGS_DIR),
                         help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -246,9 +300,9 @@ def main():
         short_path = str(log_file).replace(str(Path.home()), "~")
         if log_file.exists():
             log_file.unlink()
-            ui.done(f"Log borrado: {short_path}")
+            ui.done(f"Deleted: {short_path}")
         else:
-            ui.info(f"No existe log para {date}")
+            ui.info(f"No report for {date}")
         return
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -257,32 +311,32 @@ def main():
 
     config = load_config()
 
-    # Verificar fuentes configuradas
+    # Check configured sources
     missing = []
     if not config.get("github_token") or not config.get("github_username"):
         missing.append("GitHub (token / username)")
     if not config.get("shortcut_token"):
         missing.append("Shortcut (token)")
     if not config.get("git_repos"):
-        missing.append("Git repos locales")
+        missing.append("Git local repos")
 
     if len(missing) == 3:
-        ui.warn("No hay ninguna fuente de datos configurada:")
+        ui.warn("No data sources configured:")
         for m in missing:
             ui.item(ui.dim(m))
         print()
-        ui.info("Ejecuta: ./daily-log --setup")
+        ui.info("Run: daily-log --setup")
         print()
         sys.exit(1)
 
     if missing:
-        ui.warn("Fuentes sin configurar (se omitiran):")
+        ui.warn("Unconfigured sources (will be skipped):")
         for m in missing:
             ui.item(ui.dim(m))
-        ui.info("Puedes completar con: ./daily-log --setup")
+        ui.info("Complete with: daily-log --setup")
         print()
 
-    # Recopilar datos
+    # Collect data
     collected = []
     for name, collector in COLLECTORS:
         print(f"  {ui.dim('▸')} {name}", end="  ", flush=True)
@@ -300,53 +354,51 @@ def main():
             print(f"{ui.ERR} {ui.red(str(e))}")
             collected.append({"source": name.lower(), "error": str(e)})
 
+    # Flatten events
+    events = _collect_events(collected)
+
     if args.dry_run:
         print()
-        ui.info("Datos recopilados:")
-        print(json.dumps(collected, indent=2, ensure_ascii=False))
+        ui.info("Collected events:")
+        print(json.dumps(events, indent=2, ensure_ascii=False))
         return
 
-    # Ruta del log
+    # Report path
     year_month = date[:7].replace("-", "/")
     log_dir = output_dir / year_month
     log_file = log_dir / f"{date}.md"
     short_path = str(log_file).replace(str(Path.home()), "~")
 
-    raw = json.dumps(collected, indent=2, ensure_ascii=False)
+    raw = json.dumps(events, indent=2, ensure_ascii=False)
 
     if log_file.exists() and not _has_changes(log_file, raw):
-        ui.info(f"Sin cambios nuevos: {short_path}")
+        ui.info(f"No new changes: {short_path}")
         return
 
-    # Generar resumen
+    # Generate summary
     ui.separator()
     if args.no_ai:
-        summary = _fallback_summary(date, collected)
+        summary = _fallback_summary(events)
     else:
-        ui.run("Generando resumen con Claude...")
-        summary = generate_summary(config, date, collected)
+        ui.run("Generating summary with Claude...")
+        summary = generate_summary(config, date, events)
 
-    # Guardar
+    # Render and save
     log_dir.mkdir(parents=True, exist_ok=True)
+    markdown = _render_markdown(date, summary)
     output = (
-        summary
-        + "\n\n---\n\n"
-        + "<details>\n<summary>Datos crudos</summary>\n\n"
+        markdown
+        + "\n---\n\n"
+        + "<details>\n<summary>Raw data</summary>\n\n"
         + f"```json\n{raw}\n```\n\n"
         + "</details>\n"
     )
     log_file.write_text(output)
 
-    # Mostrar actividad destacada
-    printing = False
-    for line in summary.split("\n"):
-        if line.startswith("### Actividad destacada"):
-            printing = True
-            continue
-        elif line.startswith("#"):
-            printing = False
-        if printing and line.strip():
-            print(f"  {line.strip()}")
+    # Show highlight in terminal
+    highlight = summary.get("highlight", "")
+    if highlight:
+        print(f"  {highlight}")
     print()
     ui.done(short_path)
 
