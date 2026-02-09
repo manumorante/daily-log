@@ -1,8 +1,5 @@
-# cli Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change bootstrap-specs. Update Purpose after archive.
-## Requirements
 ### Requirement: CLI arguments
 The CLI SHALL accept: `--date DATE` (default: today), `--no-ai`, `--dry-run`, `--clear`, `--setup`, `--output-dir` (hidden). When any flag is passed, the CLI SHALL execute directly without showing the menu (backward-compatible mode).
 
@@ -22,38 +19,6 @@ The CLI SHALL accept: `--date DATE` (default: today), `--no-ai`, `--dry-run`, `-
 - **WHEN** any CLI flag is passed (--date, --dry-run, --no-ai, --clear, --setup)
 - **THEN** the command executes directly without the interactive menu
 
-### Requirement: Dry run mode
-`--dry-run` SHALL collect events from all sources and print the JSON to stdout without generating a report file.
-
-#### Scenario: Dry run
-- **WHEN** `daily-log --dry-run` is run
-- **THEN** collected events are printed as JSON and no file is written
-
-### Requirement: No-AI mode
-`--no-ai` SHALL use the fallback summary generator instead of calling the Claude API.
-
-#### Scenario: No-AI report
-- **WHEN** `daily-log --no-ai` is run
-- **THEN** a report is generated using `_fallback_summary` without calling the Claude API
-
-### Requirement: Clear report
-`--clear` SHALL delete the report file for the given date if it exists.
-
-#### Scenario: Clear existing report
-- **WHEN** `daily-log --clear` is run and a report exists for today
-- **THEN** the report file is deleted
-
-#### Scenario: Clear non-existent report
-- **WHEN** `daily-log --clear` is run and no report exists
-- **THEN** a "No report for {date}" message is shown
-
-### Requirement: Setup delegation
-`--setup` SHALL delegate to `src/setup.py` by replacing the current process.
-
-#### Scenario: Run setup
-- **WHEN** `daily-log --setup` is run
-- **THEN** `setup.py` is executed via `os.execvp`
-
 ### Requirement: Orchestration loop
 The main function SHALL run all registered collectors in order, display progress with Rich spinners for each, flatten events, check for changes, generate summary, and save the report.
 
@@ -64,4 +29,3 @@ The main function SHALL run all registered collectors in order, display progress
 #### Scenario: Missing sources warning
 - **WHEN** some but not all sources are configured
 - **THEN** unconfigured sources are listed as warnings before collection begins
-

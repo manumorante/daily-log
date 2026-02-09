@@ -1,8 +1,5 @@
-# terminal-ui Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change bootstrap-specs. Update Purpose after archive.
-## Requirements
 ### Requirement: Rich-based color system
 The UI SHALL use a shared `rich.console.Console` instance with Rich's built-in color names (green, yellow, red, blue, cyan, dim). No custom Theme, no ANSI 256 codes, no emojis.
 
@@ -25,6 +22,8 @@ The UI SHALL provide functions: `header(title)`, `ok(text)`, `skip(text)`, `warn
 - **WHEN** `done("path/to/file")` is called
 - **THEN** it prints a green bullet followed by the text, with a leading blank line
 
+## ADDED Requirements
+
 ### Requirement: Spinner support
 The UI SHALL provide a `spinner(message)` context manager that displays a Rich status spinner while a block of code executes.
 
@@ -35,4 +34,3 @@ The UI SHALL provide a `spinner(message)` context manager that displays a Rich s
 #### Scenario: Spinner on non-TTY
 - **WHEN** `spinner()` is used and stdout is not a TTY
 - **THEN** the message is printed once without animation
-

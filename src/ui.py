@@ -1,44 +1,42 @@
-"""Terminal UI helpers. Pastel ANSI 256 colors and unicode symbols."""
+"""Terminal UI helpers. Rich-based colors, symbols, and output."""
 
-import sys
+from contextlib import contextmanager
+from rich.console import Console
 
-# ─── Colors (ANSI 256) ───────────────────────────────────────────────────────
+console = Console(highlight=False)
 
-_NO_COLOR = not sys.stdout.isatty()
-
-
-def _c(code: str, text: str) -> str:
-    if _NO_COLOR:
-        return text
-    return f"\033[38;5;{code}m{text}\033[0m"
+# ─── Colors ──────────────────────────────────────────────────────────────────
 
 
-def _dim(text: str) -> str:
-    return _c("245", text)
+def _style(style: str, text: str) -> str:
+    """Return styled text as a string (for inline use with print)."""
+    with console.capture() as cap:
+        console.print(text, style=style, end="", highlight=False)
+    return cap.get()
 
 
 def green(text: str) -> str:
-    return _c("114", text)
+    return _style("green", text)
 
 
 def yellow(text: str) -> str:
-    return _c("222", text)
+    return _style("yellow", text)
 
 
 def red(text: str) -> str:
-    return _c("174", text)
+    return _style("red", text)
 
 
 def blue(text: str) -> str:
-    return _c("111", text)
+    return _style("blue", text)
 
 
 def cyan(text: str) -> str:
-    return _c("116", text)
+    return _style("cyan", text)
 
 
 def dim(text: str) -> str:
-    return _dim(text)
+    return _style("dim", text)
 
 
 # ─── Symbols ─────────────────────────────────────────────────────────────────
@@ -50,7 +48,7 @@ ERR = red("✕")
 ITEM = dim("▸")
 RUN = blue("●")
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 LINE = dim("─" * 40)
 
@@ -96,3 +94,15 @@ def separator():
     print(f"  {LINE}")
 
 
+# ─── Spinner ─────────────────────────────────────────────────────────────────
+
+
+@contextmanager
+def spinner(message: str):
+    """Show a spinner while a block executes."""
+    if console.is_terminal:
+        with console.status(f"  {message}", spinner="dots"):
+            yield
+    else:
+        print(f"  {message}")
+        yield

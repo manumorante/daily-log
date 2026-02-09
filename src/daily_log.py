@@ -8,7 +8,7 @@ import os
 import sys
 import json
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Local imports
@@ -60,6 +60,11 @@ def load_config() -> dict:
             config[config_key] = val
 
     return config
+
+
+def _get_output_dir(config):
+    # type: (dict) -> Path
+    return Path(config.get("reports_dir") or LOGS_DIR)
 
 
 # ─── Summarizer ──────────────────────────────────────────────────────────────
@@ -316,57 +321,13 @@ def _has_changes(log_file: Path, raw: str) -> bool:
         return True
 
 
-# ─── Main ────────────────────────────────────────────────────────────────────
+# ─── Actions ─────────────────────────────────────────────────────────────────
 
 
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        prog="daily-log",
-        description="Collect daily developer activity from GitHub, Shortcut and local git, and generate a summary with Claude.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Examples:\n"
-               "  daily-log                    Generate today's report\n"
-               "  daily-log --date 2026-02-05  Report for a specific date\n"
-               "  daily-log --dry-run          Show collected data only\n"
-               "  daily-log --clear            Delete today's report\n"
-               "  daily-log --no-ai            Report without Claude summary\n"
-               "  daily-log --setup            Configure tokens and repos",
-    )
-    parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"),
-                        help="report date (default: today)")
-    parser.add_argument("--no-ai", action="store_true",
-                        help="generate report without Claude summary")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="show collected events without generating report")
-    parser.add_argument("--clear", action="store_true",
-                        help="delete the report for the given date")
-    parser.add_argument("--setup", action="store_true",
-                        help="configure tokens and repos")
-    parser.add_argument("--output-dir", default=None,
-                        help=argparse.SUPPRESS)
-    args = parser.parse_args()
-
-    if args.setup:
-        setup_script = Path(__file__).parent / "setup.py"
-        os.execvp(sys.executable, [sys.executable, str(setup_script)])
-
-    config = load_config()
-    date = args.date
-    output_dir = Path(args.output_dir or config.get("reports_dir") or LOGS_DIR)
-
-    if args.clear:
-        year_month = date[:7].replace("-", "/")
-        log_file = output_dir / year_month / f"{date}.md"
-        short_path = str(log_file).replace(str(Path.home()), "~")
-        if log_file.exists():
-            log_file.unlink()
-            ui.done(f"Deleted: {short_path}")
-        else:
-            ui.info(f"No report for {date}")
-        return
-
+def run_report(config, date, no_ai=False, dry_run=False):
+    # type: (dict, str, bool, bool) -> None
+    """Collect events and generate a report for the given date."""
+    output_dir = _get_output_dir(config)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ui.header(f"daily-log {ui.dim(date)}")
@@ -387,7 +348,7 @@ def main():
         print()
         ui.info("Run: daily-log --setup")
         print()
-        sys.exit(1)
+        return
 
     if missing:
         ui.warn("Unconfigured sources (will be skipped):")
@@ -399,26 +360,25 @@ def main():
     # Collect data
     collected = []
     for name, collector in COLLECTORS:
-        print(f"  {ui.dim('▸')} {name}", end="  ", flush=True)
-        try:
-            data = collector(config, date)
-            status = data.get("status", "ok")
-            if status == "skipped":
-                print(ui.dim(f"○ {data.get('reason', '')}"))
-            elif "error" in data:
-                print(f"{ui.WARN} {ui.yellow(data['error'])}")
-            else:
-                print(ui.OK)
-            collected.append(data)
-        except Exception as e:
-            print(f"{ui.ERR} {ui.red(str(e))}")
-            collected.append({"source": name.lower(), "error": str(e)})
+        with ui.spinner(name):
+            try:
+                data = collector(config, date)
+            except Exception as e:
+                data = {"source": name.lower(), "error": str(e)}
+        status = data.get("status", "ok")
+        if status == "skipped":
+            ui.skip(f"{name} {data.get('reason', '')}")
+        elif "error" in data:
+            print(f"  {ui.WARN} {name}  {ui.yellow(data['error'])}")
+        else:
+            ui.ok(name)
+        collected.append(data)
 
     # Flatten events and estimate tasks
     events = _collect_events(collected)
     tasks = estimate_tasks(events)
 
-    if args.dry_run:
+    if dry_run:
         print()
         ui.info("Collected events:")
         print(json.dumps(events, indent=2, ensure_ascii=False))
@@ -437,12 +397,11 @@ def main():
         return
 
     # Generate summary
-    ui.separator()
-    if args.no_ai:
+    if no_ai:
         summary = _fallback_summary(events, tasks)
     else:
-        ui.run("Generating summary with Claude...")
-        summary = generate_summary(config, date, events, tasks)
+        with ui.spinner("Generating report..."):
+            summary = generate_summary(config, date, events, tasks)
 
     # Render and save
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -462,6 +421,155 @@ def main():
         print(f"  {highlight}")
     print()
     ui.done(short_path)
+
+
+def clear_report(config, date):
+    # type: (dict, str) -> None
+    """Delete the report file for the given date."""
+    output_dir = _get_output_dir(config)
+    year_month = date[:7].replace("-", "/")
+    log_file = output_dir / year_month / f"{date}.md"
+    short_path = str(log_file).replace(str(Path.home()), "~")
+    if log_file.exists():
+        log_file.unlink()
+        ui.done(f"Deleted: {short_path}")
+    else:
+        ui.info(f"No report for {date}")
+
+
+def run_setup():
+    """Launch the setup wizard."""
+    setup_script = Path(__file__).parent / "setup.py"
+    # Import and call directly instead of exec, so we return to menu
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("setup", setup_script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.main()
+
+
+# ─── Interactive menu ────────────────────────────────────────────────────────
+
+
+def _menu_loop(config):
+    # type: (dict) -> None
+    """Interactive menu loop."""
+    from beaupy import select, prompt, Abort
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    options = [
+        "Today's report",
+        "Yesterday's report",
+        "Report for a date",
+        "Delete report",
+        "Setup",
+        "Exit",
+    ]
+
+    while True:
+        ui.header("daily-log")
+        try:
+            choice = select(options, cursor_style="blue")
+        except (Abort, KeyboardInterrupt):
+            print()
+            return
+
+        if choice is None or choice == "Exit":
+            return
+
+        try:
+            if choice == "Today's report":
+                run_report(config, today)
+            elif choice == "Yesterday's report":
+                run_report(config, yesterday)
+            elif choice == "Report for a date":
+                date = prompt("  Date (YYYY-MM-DD)", initial_value=today)
+                if date:
+                    run_report(config, date)
+            elif choice == "Delete report":
+                date = prompt("  Date (YYYY-MM-DD)", initial_value=today)
+                if date:
+                    clear_report(config, date)
+            elif choice == "Setup":
+                run_setup()
+        except (Abort, KeyboardInterrupt):
+            # Ctrl+C during an action: return to menu
+            print()
+            continue
+
+        # Pause before showing menu again
+        print()
+        try:
+            input(f"  {ui.dim('Press Enter to continue...')}")
+        except (EOFError, KeyboardInterrupt):
+            return
+
+
+# ─── Main ────────────────────────────────────────────────────────────────────
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="daily-log",
+        description="Collect daily developer activity from GitHub, Shortcut and local git, and generate a summary with Claude.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Examples:\n"
+               "  daily-log                    Interactive menu\n"
+               "  daily-log --date 2026-02-05  Report for a specific date\n"
+               "  daily-log --dry-run          Show collected data only\n"
+               "  daily-log --clear            Delete today's report\n"
+               "  daily-log --no-ai            Report without Claude summary\n"
+               "  daily-log --setup            Configure tokens and repos",
+    )
+    parser.add_argument("--date", default=None,
+                        help="report date (default: today)")
+    parser.add_argument("--no-ai", action="store_true",
+                        help="generate report without Claude summary")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="show collected events without generating report")
+    parser.add_argument("--clear", action="store_true",
+                        help="delete the report for the given date")
+    parser.add_argument("--setup", action="store_true",
+                        help="configure tokens and repos")
+    parser.add_argument("--output-dir", default=None,
+                        help=argparse.SUPPRESS)
+    args = parser.parse_args()
+
+    # --setup: launch wizard directly
+    if args.setup:
+        run_setup()
+        return
+
+    # Determine if any flag was explicitly passed
+    has_flags = args.date or args.no_ai or args.dry_run or args.clear or args.output_dir
+
+    if has_flags:
+        # Direct execution mode (backward-compatible)
+        config = load_config()
+        date = args.date or datetime.now().strftime("%Y-%m-%d")
+
+        if args.output_dir:
+            config["reports_dir"] = args.output_dir
+
+        if args.clear:
+            clear_report(config, date)
+        else:
+            run_report(config, date, no_ai=args.no_ai, dry_run=args.dry_run)
+    elif sys.stdout.isatty():
+        # Interactive menu mode
+        config = load_config()
+        try:
+            _menu_loop(config)
+        except KeyboardInterrupt:
+            print()
+    else:
+        # Non-TTY: generate today's report directly
+        config = load_config()
+        run_report(config, datetime.now().strftime("%Y-%m-%d"))
 
 
 if __name__ == "__main__":
