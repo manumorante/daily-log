@@ -19,9 +19,10 @@ from collectors import ALL as COLLECTORS
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
-CONFIG_DIR = Path.home() / ".config" / "daily-log"
+APP_NAME = "daily-log"
+CONFIG_DIR = Path.home() / ".config" / APP_NAME
 CONFIG_FILE = CONFIG_DIR / "config.json"
-LOGS_DIR = Path(__file__).resolve().parent.parent / "reports"
+LOGS_DIR = Path.home() / APP_NAME / "reports"
 
 DEFAULT_CONFIG = {
     "github_token": "",
@@ -285,7 +286,7 @@ def main():
                         help="delete the report for the given date")
     parser.add_argument("--setup", action="store_true",
                         help="configure tokens and repos")
-    parser.add_argument("--output-dir", default=str(LOGS_DIR),
+    parser.add_argument("--output-dir", default=None,
                         help=argparse.SUPPRESS)
     args = parser.parse_args()
 
@@ -293,8 +294,9 @@ def main():
         setup_script = Path(__file__).parent / "setup.py"
         os.execvp(sys.executable, [sys.executable, str(setup_script)])
 
+    config = load_config()
     date = args.date
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir or config.get("reports_dir") or LOGS_DIR)
 
     if args.clear:
         year_month = date[:7].replace("-", "/")
@@ -310,8 +312,6 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     ui.header(f"daily-log {ui.dim(date)}")
-
-    config = load_config()
 
     # Check configured sources
     missing = []

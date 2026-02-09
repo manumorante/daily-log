@@ -34,7 +34,8 @@ Setup creates `~/.config/daily-log/config.json`:
   "anthropic_api_key": "sk-ant-...",
   "wakatime_api_key": "waka_...",
   "git_repos": ["~/projects/project-1", "~/projects/project-2"],
-  "anthropic_model": "claude-sonnet-4-5-20250929"
+  "anthropic_model": "claude-sonnet-4-5-20250929",
+  "reports_dir": "~/daily-log/reports"
 }
 ```
 
@@ -56,8 +57,10 @@ daily-log --setup            # Interactive config setup
 ## Output
 
 ```
-reports/YYYY/MM/YYYY-MM-DD.md
+~/daily-log/reports/YYYY/MM/YYYY-MM-DD.md
 ```
+
+Reports are stored outside the repo to keep them private.
 
 ## Adding sources
 

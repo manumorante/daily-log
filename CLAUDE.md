@@ -18,7 +18,6 @@ src/
     git_local.py             # Commits in local repos (filtered by author)
     wakatime.py              # Coding time per project, activity blocks
     claude_code.py           # Chat sessions from ~/.claude/history.jsonl
-reports/                     # Generated daily reports (YYYY/MM/YYYY-MM-DD.md)
 openspec/                    # Spec-driven development (OpenSpec)
 ```
 
@@ -37,6 +36,7 @@ daily-log --setup            # Interactive config setup
 
 Stored at `~/.config/daily-log/config.json`. Env vars override config values:
 `GITHUB_TOKEN`, `GITHUB_USERNAME`, `SHORTCUT_TOKEN`, `ANTHROPIC_API_KEY`.
+Optional `reports_dir` in config changes where reports are saved (default: `~/daily-log/reports`).
 
 ## Architecture
 
@@ -45,15 +45,14 @@ Stored at `~/.config/daily-log/config.json`. Env vars override config values:
 - **API helpers**: `src/api.py` — `fetch()`, `github()`, `shortcut()`, `wakatime()`.
 - **Summarizer**: `generate_summary` calls Claude API; `_fallback_summary` generates markdown without AI.
 - **UI**: `src/ui.py` — pastel ANSI 256 colors, unicode symbols, no emojis.
-- **Output**: `reports/YYYY/MM/YYYY-MM-DD.md` with raw data in `<details>`.
+- **Output**: `~/daily-log/reports/YYYY/MM/YYYY-MM-DD.md` with raw data in `<details>`.
 - **Skip logic**: If data hasn't changed vs existing report, skip regeneration.
 
 ## Reports
 
-Reports in `reports/` are the primary output. NEVER delete, overwrite, or discard report files. When committing, always preserve existing reports. If a report appears deleted in git status, restore it.
+Reports are stored outside the repo at `~/daily-log/reports/` (private). They are the primary output of this project.
 
 ## Style
 
 - No emojis. Pastel colors and unicode symbols only.
 - Python 3.9 compatible (use `Optional`/`Union`, not `X | Y` type hints).
-- Stdlib only — no external dependencies.
