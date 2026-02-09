@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Setup interactivo para daily-log.
-Crea la configuración inicial pidiendo los tokens necesarios.
-"""
+"""Interactive setup wizard for daily-log."""
 
 import json
 import os
@@ -12,6 +9,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import ui
+from beaupy import prompt, confirm, select_multiple
+
+
+# ─── Config ──────────────────────────────────────────────────────────────────
 
 CONFIG_DIR = Path.home() / ".config" / "daily-log"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -27,19 +28,63 @@ DEFAULT_CONFIG = {
 }
 
 
-def ask(prompt: str, default: str = "", secret: bool = False) -> str:
-    """Pide input al usuario."""
-    suffix = f" [{default}]" if default else ""
-    if secret:
-        import getpass
-        val = getpass.getpass(f"{prompt}{suffix}: ")
-    else:
-        val = input(f"{prompt}{suffix}: ")
-    return val.strip() or default
+# ─── Section definitions ─────────────────────────────────────────────────────
+
+def _check_github(c):
+    return bool(c.get("github_token") and c.get("github_username"))
 
 
-def find_git_repos(base_dirs: list[str], max_depth: int = 2) -> list[str]:
-    """Busca repos git en los directorios dados."""
+def _check_key(key):
+    return lambda c: bool(c.get(key))
+
+
+def _check_repos(c):
+    return bool(c.get("git_repos"))
+
+
+SECTIONS = [
+    {
+        "name": "GitHub",
+        "check": _check_github,
+        "fields": [
+            {"key": "github_username", "label": "Username"},
+            {"key": "github_token", "label": "Token (ghp_...)", "secret": True},
+        ],
+    },
+    {
+        "name": "Shortcut",
+        "check": _check_key("shortcut_token"),
+        "fields": [
+            {"key": "shortcut_token", "label": "API token", "secret": True},
+        ],
+    },
+    {
+        "name": "Claude API",
+        "check": _check_key("anthropic_api_key"),
+        "fields": [
+            {"key": "anthropic_api_key", "label": "API key (sk-ant-...)", "secret": True},
+            {"key": "anthropic_model", "label": "Model"},
+        ],
+    },
+    {
+        "name": "WakaTime",
+        "check": _check_key("wakatime_api_key"),
+        "fields": [
+            {"key": "wakatime_api_key", "label": "API key", "secret": True},
+        ],
+    },
+    {
+        "name": "Git repos",
+        "check": _check_repos,
+        "custom": "setup_repos",
+    },
+]
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def find_git_repos(base_dirs, max_depth=2):
+    """Find git repos in the given directories."""
     repos = []
     for base in base_dirs:
         base = os.path.expanduser(base)
@@ -52,165 +97,118 @@ def find_git_repos(base_dirs: list[str], max_depth: int = 2) -> list[str]:
             )
             for line in result.stdout.strip().split("\n"):
                 if line:
-                    repo = os.path.dirname(line)
-                    repos.append(repo)
+                    repos.append(os.path.dirname(line))
         except Exception:
             pass
     return sorted(repos)
 
 
-def mask(value: str) -> str:
-    """Enmascara un token mostrando solo los últimos 4 caracteres."""
-    if len(value) <= 4:
-        return "****"
-    return "****" + value[-4:]
-
-
-def setup_github(config: dict):
-    """Configura GitHub."""
-    print(f"  {ui.dim('GitHub')}")
-    config["github_username"] = ask(
-        "GitHub username", config.get("github_username", "")
-    )
-    config["github_token"] = ask(
-        "GitHub token (ghp_...)", config.get("github_token", ""), secret=True
-    ) or config.get("github_token", "")
-    print()
-
-
-def setup_shortcut(config: dict):
-    """Configura Shortcut."""
-    print(f"  {ui.dim('Shortcut')}")
-    config["shortcut_token"] = ask(
-        "Shortcut API token", config.get("shortcut_token", ""), secret=True
-    ) or config.get("shortcut_token", "")
-    print()
-
-
-def setup_anthropic(config: dict):
-    """Configura Anthropic."""
-    print(f"  {ui.dim('Claude API')}")
-    config["anthropic_api_key"] = ask(
-        "Anthropic API key (sk-ant-...)", config.get("anthropic_api_key", ""), secret=True
-    ) or config.get("anthropic_api_key", "")
-    config["anthropic_model"] = ask(
-        "Modelo", config.get("anthropic_model", "claude-sonnet-4-5-20250929")
-    )
-    print()
-
-
-def setup_wakatime(config: dict):
-    """Configura WakaTime."""
-    print(f"  {ui.dim('WakaTime')}")
-    config["wakatime_api_key"] = ask(
-        "WakaTime API key", config.get("wakatime_api_key", ""), secret=True
-    ) or config.get("wakatime_api_key", "")
-    print()
-
-
-def setup_repos(config: dict):
-    """Configura repos locales."""
-    print(f"  {ui.dim('Git repos locales')}")
-    scan = ask("Buscar repos automaticamente? (s/n)", "s")
-    if scan.lower() in ("s", "si", "sí", "y", "yes"):
-        search_dirs = ask(
-            "Directorios a escanear (separados por coma)",
-            "~/Code,~/Projects,~/Dev"
+def setup_section(config, section):
+    """Prompt fields for a standard section."""
+    print(f"  {ui.dim(section['name'])}")
+    for field in section["fields"]:
+        current = config.get(field["key"], "")
+        value = prompt(
+            f"  {field['label']}",
+            initial_value=current,
+            secure=field.get("secret", False),
         )
-        dirs = [d.strip() for d in search_dirs.split(",")]
+        if value:
+            config[field["key"]] = value
+    print()
+
+
+def setup_repos(config):
+    """Custom handler for git repo selection."""
+    print(f"  {ui.dim('Git repos')}")
+    if confirm("  Scan for repos automatically?", default_is_yes=True):
+        dirs_input = prompt("  Directories to scan (comma-separated)", initial_value="~/projects")
+        dirs = [d.strip() for d in dirs_input.split(",")]
         repos = find_git_repos(dirs)
         if repos:
-            print(f"\n  Encontrados {len(repos)} repos:")
-            for i, r in enumerate(repos):
-                print(f"    {ui.dim(str(i+1))}. {r}")
-            use_all = ask("\nUsar todos? (s/n/numeros separados por coma)", "s")
-            if use_all.lower() in ("s", "si", "sí", "y", "yes"):
-                config["git_repos"] = repos
-            elif use_all.replace(",", "").replace(" ", "").isdigit():
-                indices = [int(x.strip()) - 1 for x in use_all.split(",")]
-                config["git_repos"] = [repos[i] for i in indices if 0 <= i < len(repos)]
+            print(f"\n  Found {len(repos)} repos:\n")
+            selected = select_multiple(
+                repos,
+                ticked_indices=list(range(len(repos))),
+                pagination=len(repos) > 10,
+                page_size=10,
+            )
+            config["git_repos"] = selected
         else:
-            ui.skip("No se encontraron repos.")
+            ui.skip("No repos found.")
     else:
-        manual = ask("Paths de repos (separados por coma)", "")
+        manual = prompt("  Repo paths (comma-separated)", initial_value="")
         if manual:
             config["git_repos"] = [p.strip() for p in manual.split(",")]
     print()
 
 
-SECTIONS = [
-    ("GitHub", "github", lambda c: bool(c.get("github_token") and c.get("github_username")), setup_github),
-    ("Shortcut", "shortcut", lambda c: bool(c.get("shortcut_token")), setup_shortcut),
-    ("Claude API", "anthropic", lambda c: bool(c.get("anthropic_api_key")), setup_anthropic),
-    ("WakaTime", "wakatime", lambda c: bool(c.get("wakatime_api_key")), setup_wakatime),
-    ("Git repos", "repos", lambda c: bool(c.get("git_repos")), setup_repos),
-]
-
+# ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
     ui.header("daily-log setup")
 
-    # Cargar config existente o crear nueva
+    # Load existing config or start fresh
     existing = {}
     if CONFIG_FILE.exists():
         existing = json.loads(CONFIG_FILE.read_text())
 
     config = {**DEFAULT_CONFIG, **existing}
 
-    # Mostrar estado actual y detectar qué falta
+    # Show current status
     pending = []
     configured = []
-    for name, key, check, setup_fn in SECTIONS:
-        if check(config):
-            configured.append((name, key, check, setup_fn))
+    for section in SECTIONS:
+        if section["check"](config):
+            configured.append(section)
         else:
-            pending.append((name, key, check, setup_fn))
+            pending.append(section)
 
     if configured:
-        for name, _, _, _ in configured:
-            print(f"  {ui.OK} {name}")
+        for s in configured:
+            print(f"  {ui.OK} {s['name']}")
 
     if pending:
-        for name, _, _, _ in pending:
-            print(f"  {ui.SKIP} {ui.dim(name)}")
+        for s in pending:
+            print(f"  {ui.SKIP} {ui.dim(s['name'])}")
         print()
 
-        # Solo configurar lo que falta
-        for name, key, check, setup_fn in pending:
-            setup_fn(config)
+        # Only configure what's missing
+        for section in pending:
+            if "custom" in section:
+                setup_repos(config)
+            else:
+                setup_section(config, section)
     else:
         print()
-        ui.info("Todo configurado.")
-        reconf = ask("Reconfigurar algo? (s/n)", "n")
-        if reconf.lower() not in ("s", "si", "sí", "y", "yes"):
+        if not confirm("  All configured. Reconfigure?", default_is_yes=False):
             print()
-            ui.info("Ejecuta: ./daily-log")
+            ui.info("Run: ./daily-log")
             return
         print()
-        # Mostrar menú para elegir qué reconfigurar
-        for i, (name, _, _, _) in enumerate(SECTIONS):
-            print(f"  {ui.dim(str(i+1))}. {name}")
-        choices = ask("\nNumeros a reconfigurar (separados por coma)", "")
-        if choices:
-            indices = [int(x.strip()) - 1 for x in choices.split(",") if x.strip().isdigit()]
-            print()
-            for i in indices:
-                if 0 <= i < len(SECTIONS):
-                    SECTIONS[i][3](config)
+        names = [s["name"] for s in SECTIONS]
+        selected = select_multiple(names, minimal_count=1)
+        print()
+        for section in SECTIONS:
+            if section["name"] in selected:
+                if "custom" in section:
+                    setup_repos(config)
+                else:
+                    setup_section(config, section)
 
-    # Guardar
+    # Save
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(config, indent=2))
     ui.separator()
-    for name, _, check, _ in SECTIONS:
-        if check(config):
-            print(f"  {ui.OK} {name}")
+    for section in SECTIONS:
+        if section["check"](config):
+            print(f"  {ui.OK} {section['name']}")
         else:
-            print(f"  {ui.SKIP} {ui.dim(name)}")
+            print(f"  {ui.SKIP} {ui.dim(section['name'])}")
 
-    ui.done(f"Config guardada: {CONFIG_FILE}")
+    ui.done(f"Config saved: {CONFIG_FILE}")
     print()
-    ui.info("Ejecuta: ./daily-log")
+    ui.info("Run: ./daily-log")
 
 
 if __name__ == "__main__":

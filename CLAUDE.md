@@ -56,3 +56,4 @@ Reports are stored outside the repo at `~/daily-log/reports/` (private). They ar
 
 - No emojis. Pastel colors and unicode symbols only.
 - Python 3.9 compatible (use `Optional`/`Union`, not `X | Y` type hints).
+- All code, comments, variable names, and commit messages in English. No exceptions regardless of user language.
