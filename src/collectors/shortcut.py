@@ -70,6 +70,7 @@ def collect_shortcut(config: dict, date: str) -> dict:
                 "title": story.get("name", ""),
                 "meta": {
                     "id": story_id,
+                    "task_id": str(story_id),
                     "story_type": story.get("story_type", ""),
                     "workflow_state": state_map.get(state_id, str(state_id) if state_id else "unknown"),
                     "completed": completed,
