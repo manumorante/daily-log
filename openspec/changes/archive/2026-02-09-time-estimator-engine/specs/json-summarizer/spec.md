@@ -1,9 +1,5 @@
-# json-summarizer Specification
+## MODIFIED Requirements
 
-## Purpose
-Structured JSON summarizer that sends events and task estimates to Claude API and renders the response as a markdown report.
-
-## Requirements
 ### Requirement: Claude returns structured JSON
 The summarizer prompt SHALL instruct Claude to return a JSON object, not markdown. The response MUST be parseable as JSON. The prompt SHALL include task-grouped data with time estimates when available, in addition to raw events.
 
@@ -37,24 +33,6 @@ The JSON object SHALL contain: `highlight` (str, 2-3 sentences), `code` (list of
 #### Scenario: No activity in a section
 - **WHEN** there are no shortcut stories
 - **THEN** `tasks` is `[]` (empty array)
-
-### Requirement: Terminal shows only highlight
-After generating the summary, the terminal SHALL display only the `highlight` field, not the full report.
-
-#### Scenario: Display after generation
-- **WHEN** the report is generated successfully
-- **THEN** terminal shows the highlight text and the file path
-
-### Requirement: Markdown rendered from JSON
-The .md file SHALL be rendered from the JSON fields, not from raw Claude text. Each non-empty section becomes a markdown heading with formatted content.
-
-#### Scenario: Full report render
-- **WHEN** JSON has highlight, 2 code groups, 1 task, and 1 pattern
-- **THEN** the .md file contains sections for summary, code, tasks, and patterns
-
-#### Scenario: Empty sections omitted
-- **WHEN** JSON has empty `risks` array
-- **THEN** the .md file does not include a risks section
 
 ### Requirement: Fallback summary from events
 When Claude API is unavailable, `_fallback_summary` SHALL generate the same JSON schema from raw events and task estimates: empty highlight, code groups by repo, tasks from story events enriched with time data when available, empty patterns and risks.

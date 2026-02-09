@@ -36,6 +36,31 @@ def _extract_title(messages):
     return "Claude Code session"
 
 
+# If gap between consecutive messages exceeds this, the time is idle
+_IDLE_THRESHOLD_MS = 10 * 60 * 1000  # 10 minutes
+
+# Reading margin per message (accounts for reading Claude's response)
+_READ_MARGIN_MS = 2 * 60 * 1000  # 2 minutes
+
+
+def _calc_active_seconds(entries):
+    """Calculate active time from message timestamps, excluding idle gaps."""
+    if len(entries) < 2:
+        return _READ_MARGIN_MS / 1000  # single message = just the read margin
+
+    active_ms = 0
+    for i in range(1, len(entries)):
+        gap = entries[i].get("timestamp", 0) - entries[i - 1].get("timestamp", 0)
+        if gap <= _IDLE_THRESHOLD_MS:
+            active_ms += gap
+        # Idle gaps are simply not counted
+
+    # Add read margin for the last message (you read Claude's final response)
+    active_ms += _READ_MARGIN_MS
+
+    return active_ms / 1000
+
+
 def collect_claude_code(config, date):
     """Collect Claude Code sessions from history.jsonl."""
     history_path = config.get("claude_history_path", "~/.claude/history.jsonl")
@@ -102,6 +127,7 @@ def collect_claude_code(config, date):
                 "session_id": session_id[:8],
                 "message_count": len(entries),
                 "end_time": dt_end.isoformat(),
+                "active_seconds": _calc_active_seconds(entries),
             },
         })
 
