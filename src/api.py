@@ -1,4 +1,4 @@
-"""HTTP helpers para daily-log."""
+"""HTTP helpers for daily-log."""
 
 import base64
 import json
@@ -7,7 +7,7 @@ from typing import Optional, Union
 
 
 def fetch(url: str, headers: dict, data: Optional[bytes] = None) -> Union[dict, list]:
-    """GET/POST JSON. Devuelve el body parseado o lanza excepcion."""
+    """GET/POST JSON. Returns parsed body or raises."""
     req = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read())

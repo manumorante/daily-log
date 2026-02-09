@@ -1,11 +1,8 @@
-"""
-Helpers de interfaz para daily-log.
-Colores pastel ANSI y símbolos elegantes.
-"""
+"""Terminal UI helpers. Pastel ANSI 256 colors and unicode symbols."""
 
 import sys
 
-# ─── Colores (ANSI 256) ──────────────────────────────────────────────────────
+# ─── Colors (ANSI 256) ───────────────────────────────────────────────────────
 
 _NO_COLOR = not sys.stdout.isatty()
 
@@ -44,7 +41,7 @@ def dim(text: str) -> str:
     return _dim(text)
 
 
-# ─── Símbolos ─────────────────────────────────────────────────────────────────
+# ─── Symbols ─────────────────────────────────────────────────────────────────
 
 OK = green("●")
 SKIP = dim("○")

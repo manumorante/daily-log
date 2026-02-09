@@ -64,7 +64,6 @@ reports/YYYY/MM/YYYY-MM-DD.md
 Create a collector in `src/collectors/`:
 
 ```python
-# src/collectors/xxx.py
 def collect_xxx(config: dict, date: str) -> dict:
     events = [{"type": "xxx", "timestamp": "...", "source": "xxx", "title": "...", "meta": {}}]
     return {"source": "xxx", "events": events}
