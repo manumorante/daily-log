@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import ui
 from api import fetch
 from collectors import ALL as COLLECTORS
+from estimator import estimate_tasks
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -64,29 +65,31 @@ def load_config() -> dict:
 
 SUMMARY_PROMPT = """You are an assistant that analyzes daily developer activity.
 
-You will receive a JSON array of events from different sources (GitHub, Shortcut, local git).
+You will receive a JSON array of events from different sources (GitHub, Shortcut, local git, WakaTime, Claude Code).
 Each event has: type, timestamp, source, title, meta.
+
+You may also receive "Task estimates" at the end — pre-computed task groupings with time data from WakaTime coding blocks and Claude Code sessions. Use these to enrich your analysis with actual time spent.
 
 Respond with ONLY a valid JSON object (no markdown, no explanation) with this exact schema:
 
 {{
-  "highlight": "2-3 sentence summary of the most important activity of the day. Write in Spanish.",
+  "highlight": "2-3 sentence summary of the most important activity of the day. Include time spent on key tasks when available. Write in Spanish.",
   "code": [
     {{"group": "group name", "items": ["commit description 1", "commit description 2"]}}
   ],
   "tasks": [
-    {{"id": 123, "name": "task name", "status": "in_progress|completed", "note": "optional observation"}}
+    {{"id": 123, "name": "task name", "status": "in_progress|completed", "note": "optional observation", "time_spent": "1h 30min coding"}}
   ],
-  "patterns": ["observation about work patterns, sessions, or trends"],
+  "patterns": ["observation about work patterns, sessions, time distribution, or trends"],
   "risks": ["risk or concern identified from the data"]
 }}
 
 Rules:
 - Write all text content in Spanish
 - Group related commits together in "code" (don't list merge commits individually)
-- "tasks" comes from Shortcut story events
-- "patterns" should note temporal patterns (e.g., intense sessions, long-running tasks)
-- "risks" should flag concerns (e.g., stories stuck too long, no reviews)
+- "tasks" comes from Shortcut story events; include "time_spent" from task estimates when available
+- "patterns" should note temporal patterns (e.g., time distribution across tasks, intense sessions, context switching)
+- "risks" should flag concerns (e.g., stories stuck too long, no reviews, excessive time on one task)
 - Empty sections must be empty arrays [], never omit keys
 - Respond with ONLY the JSON object, nothing else
 
@@ -102,15 +105,52 @@ def _collect_events(collected: list) -> list:
     return events
 
 
-def generate_summary(config: dict, date: str, events: list) -> dict:
+def _format_tasks_for_prompt(tasks):
+    # type: (list) -> str
+    """Format estimated tasks as a compact summary for the Claude prompt."""
+    if not tasks:
+        return ""
+
+    lines = ["\n\nTask estimates:"]
+    for t in tasks:
+        coding = t.get("coding_time_seconds", 0)
+        session = t.get("session_time_seconds", 0)
+        window = t.get("window_seconds", 0)
+        num_sessions = len(t.get("sessions", []))
+        num_events = len(t.get("events", []))
+
+        time_parts = []
+        if coding > 0:
+            mins = int(coding / 60)
+            time_parts.append(f"{mins}min coding (WakaTime)")
+        if session > 0:
+            mins = int(session / 60)
+            time_parts.append(f"{mins}min AI sessions")
+        if window > 0 and not coding:
+            mins = int(window / 60)
+            time_parts.append(f"{mins}min window")
+
+        time_str = ", ".join(time_parts) if time_parts else "no time data"
+        lines.append(
+            f"- {t['label']} [{t['task_id']}]: "
+            f"{time_str} | {num_events} events, {num_sessions} sessions | "
+            f"sources: {', '.join(t.get('sources', []))}"
+        )
+
+    return "\n".join(lines)
+
+
+def generate_summary(config, date, events, tasks=None):
+    # type: (dict, str, list, list) -> dict
     api_key = config.get("anthropic_api_key")
     if not api_key:
-        return _fallback_summary(events)
+        return _fallback_summary(events, tasks)
 
     model = config.get("anthropic_model", "claude-sonnet-4-5-20250929")
     prompt = (
         SUMMARY_PROMPT.replace("{date}", date)
         + json.dumps(events, indent=2, ensure_ascii=False)
+        + _format_tasks_for_prompt(tasks or [])
     )
 
     try:
@@ -138,7 +178,7 @@ def generate_summary(config: dict, date: str, events: list) -> dict:
 
     except (json.JSONDecodeError, KeyError):
         ui.err("Claude returned invalid JSON, using fallback")
-        return _fallback_summary(events)
+        return _fallback_summary(events, tasks)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         try:
@@ -147,16 +187,40 @@ def generate_summary(config: dict, date: str, events: list) -> dict:
             detail = body
         ui.err(f"Claude API: {e.code} {e.reason}")
         ui.info(detail)
-        return _fallback_summary(events)
+        return _fallback_summary(events, tasks)
     except Exception as e:
         ui.err(f"Claude API: {e}")
-        return _fallback_summary(events)
+        return _fallback_summary(events, tasks)
 
 
-def _fallback_summary(events: list) -> dict:
+def _format_time(seconds):
+    # type: (float) -> str
+    """Format seconds into a human-readable string."""
+    if seconds <= 0:
+        return ""
+    hours = int(seconds // 3600)
+    mins = int((seconds % 3600) // 60)
+    if hours > 0:
+        return f"{hours}h {mins}min"
+    return f"{mins}min"
+
+
+def _fallback_summary(events, estimated_tasks=None):
+    # type: (list, list) -> dict
     """Generate the same JSON schema from raw events without AI."""
     code_by_repo = {}
     tasks = []
+
+    # Build a lookup from task_id to estimated time
+    time_by_task = {}
+    if estimated_tasks:
+        for et in estimated_tasks:
+            tid = et.get("task_id", "")
+            coding = et.get("coding_time_seconds", 0)
+            session = et.get("session_time_seconds", 0)
+            total = coding + session
+            if total > 0:
+                time_by_task[tid] = _format_time(total)
 
     for ev in events:
         t = ev.get("type", "")
@@ -172,12 +236,17 @@ def _fallback_summary(events: list) -> dict:
             )
         elif t == "story":
             status = "completed" if meta.get("completed") else "in_progress"
-            tasks.append({
+            task_id = str(meta.get("task_id", meta.get("id", "")))
+            time_spent = time_by_task.get(task_id, "")
+            entry = {
                 "id": meta.get("id"),
                 "name": ev.get("title", ""),
                 "status": status,
                 "note": meta.get("workflow_state", ""),
-            })
+            }
+            if time_spent:
+                entry["time_spent"] = time_spent
+            tasks.append(entry)
         elif t == "epic":
             tasks.append({
                 "id": meta.get("id"),
@@ -356,8 +425,9 @@ def main():
             print(f"{ui.ERR} {ui.red(str(e))}")
             collected.append({"source": name.lower(), "error": str(e)})
 
-    # Flatten events
+    # Flatten events and estimate tasks
     events = _collect_events(collected)
+    tasks = estimate_tasks(events)
 
     if args.dry_run:
         print()
@@ -380,10 +450,10 @@ def main():
     # Generate summary
     ui.separator()
     if args.no_ai:
-        summary = _fallback_summary(events)
+        summary = _fallback_summary(events, tasks)
     else:
         ui.run("Generating summary with Claude...")
-        summary = generate_summary(config, date, events)
+        summary = generate_summary(config, date, events, tasks)
 
     # Render and save
     log_dir.mkdir(parents=True, exist_ok=True)
