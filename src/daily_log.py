@@ -17,6 +17,7 @@ import ui
 from api import fetch
 from collectors import ALL as COLLECTORS
 from estimator import estimate_tasks
+from collectors._utils import format_duration
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -193,18 +194,6 @@ def generate_summary(config, date, events, tasks=None):
         return _fallback_summary(events, tasks)
 
 
-def _format_time(seconds):
-    # type: (float) -> str
-    """Format seconds into a human-readable string."""
-    if seconds <= 0:
-        return ""
-    hours = int(seconds // 3600)
-    mins = int((seconds % 3600) // 60)
-    if hours > 0:
-        return f"{hours}h {mins}min"
-    return f"{mins}min"
-
-
 def _fallback_summary(events, estimated_tasks=None):
     # type: (list, list) -> dict
     """Generate the same JSON schema from raw events without AI."""
@@ -220,7 +209,7 @@ def _fallback_summary(events, estimated_tasks=None):
             session = et.get("session_time_seconds", 0)
             total = coding + session
             if total > 0:
-                time_by_task[tid] = _format_time(total)
+                time_by_task[tid] = format_duration(total)
 
     for ev in events:
         t = ev.get("type", "")

@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from collectors._utils import extract_task_id
+from collectors._utils import branch_meta
 
 
 def _git_user(repo_path: str) -> str:
@@ -123,12 +123,8 @@ def collect_git_local(config: dict, date: str) -> dict:
                         "sha": sha,
                         "repo": repo_name,
                         "author": parts[2],
+                        **branch_meta(branch),
                     }
-                    if branch:
-                        meta["branch"] = branch
-                        tid = extract_task_id(branch)
-                        if tid:
-                            meta["task_id"] = tid
 
                     events.append({
                         "type": "commit",

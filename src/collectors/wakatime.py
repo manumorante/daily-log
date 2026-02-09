@@ -3,6 +3,7 @@
 import urllib.error
 from datetime import datetime, timezone, timedelta
 from api import wakatime
+from collectors._utils import format_duration
 
 
 def _unix_to_iso(ts: float, tz_name: str) -> str:
@@ -16,15 +17,6 @@ def _unix_to_iso(ts: float, tz_name: str) -> str:
     # fetch the API's start field which is already in UTC, and compute offset from
     # the date string. For now, return UTC ISO — the caller patches the offset.
     return dt.isoformat()
-
-
-def _format_duration(seconds: float) -> str:
-    """Format seconds into a human-readable string like WakaTime does."""
-    hours = int(seconds // 3600)
-    mins = int((seconds % 3600) // 60)
-    if hours > 0:
-        return f"{hours}h {mins}min"
-    return f"{mins}min"
 
 
 def collect_wakatime(config: dict, date: str) -> dict:
@@ -55,7 +47,7 @@ def collect_wakatime(config: dict, date: str) -> dict:
                     "type": "coding_summary",
                     "timestamp": day_start,
                     "source": "wakatime",
-                    "title": f"{project['name']} — {project.get('text', _format_duration(total))}",
+                    "title": f"{project['name']} — {project.get('text', format_duration(total))}",
                     "meta": {
                         "project": project["name"],
                         "total_seconds": total,
@@ -80,7 +72,7 @@ def collect_wakatime(config: dict, date: str) -> dict:
                 "type": "coding_block",
                 "timestamp": _unix_to_iso(ts, durations.get("timezone", "UTC")),
                 "source": "wakatime",
-                "title": f"{project} ({_format_duration(duration)})",
+                "title": f"{project} ({format_duration(duration)})",
                 "meta": {
                     "project": project,
                     "duration_seconds": duration,
