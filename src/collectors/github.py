@@ -2,22 +2,39 @@
 
 import urllib.error
 from api import github
+from collectors._utils import extract_task_id
+
+
+def _branch_meta(branch):
+    """Build branch and task_id meta entries from a branch name."""
+    meta = {}
+    if branch:
+        meta["branch"] = branch
+        tid = extract_task_id(branch)
+        if tid:
+            meta["task_id"] = tid
+    return meta
 
 
 def _parse_push(repo, payload, ts):
+    ref = payload.get("ref", "")
+    branch = ref.replace("refs/heads/", "") if ref.startswith("refs/heads/") else ""
+    enrichment = _branch_meta(branch)
     return [
         {
             "type": "commit",
             "timestamp": ts,
             "source": "github",
             "title": c.get("message", "").split("\n")[0],
-            "meta": {"sha": c.get("sha", "")[:7], "repo": repo},
+            "meta": {"sha": c.get("sha", "")[:7], "repo": repo, **enrichment},
         }
         for c in payload.get("commits", [])
     ]
 
 
 def _parse_pr(repo, payload, ts):
+    branch = payload.get("pull_request", {}).get("head", {}).get("ref", "")
+    enrichment = _branch_meta(branch)
     return [{
         "type": "pr",
         "timestamp": ts,
@@ -27,6 +44,7 @@ def _parse_pr(repo, payload, ts):
             "action": payload.get("action", ""),
             "repo": repo,
             "number": payload.get("pull_request", {}).get("number"),
+            **enrichment,
         },
     }]
 
