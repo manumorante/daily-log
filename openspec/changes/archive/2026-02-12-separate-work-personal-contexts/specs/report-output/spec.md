@@ -1,8 +1,5 @@
-# report-output Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change bootstrap-specs. Update Purpose after archive.
-## Requirements
 ### Requirement: Report file structure
 Reports SHALL be written as Markdown files at `{reports_dir}/{context}/YYYY/MM/YYYY-MM-DD.md` where `context` is either `"work"` or `"personal"`. The directory structure SHALL be created automatically.
 
@@ -18,38 +15,7 @@ Reports SHALL be written as Markdown files at `{reports_dir}/{context}/YYYY/MM/Y
 - **WHEN** both work and personal reports are generated for the same date
 - **THEN** two separate files are created in their respective context subdirectories
 
-### Requirement: Report content format
-Each report SHALL contain: rendered markdown summary, a horizontal rule, then a `<details>` block with raw JSON event data inside a code fence.
-
-#### Scenario: Report with summary and raw data
-- **WHEN** a report is generated
-- **THEN** the file contains the markdown summary followed by `---` and `<details><summary>Raw data</summary>` with the JSON events
-
-### Requirement: Markdown rendering
-`_render_markdown(date, summary)` SHALL render a summary dict into markdown with sections: header (date), highlight text, patterns/risks as bullet list, completed tasks, in-progress tasks, and code groups.
-
-#### Scenario: Summary with all sections populated
-- **WHEN** summary has highlight, patterns, tasks (done + active), and code groups
-- **THEN** all sections are rendered in order with appropriate headers
-
-#### Scenario: Empty summary
-- **WHEN** summary has empty arrays and no highlight
-- **THEN** only the date header is rendered
-
-### Requirement: Skip unchanged reports
-`_has_changes(log_file, raw)` SHALL compare the raw JSON in an existing report's `<details>` block with current raw data. If identical, the report SHALL NOT be regenerated.
-
-#### Scenario: Data unchanged
-- **WHEN** the raw JSON matches the existing report's embedded data
-- **THEN** the report is not regenerated and a "No new changes" message is shown
-
-#### Scenario: Data changed
-- **WHEN** the raw JSON differs from the existing report
-- **THEN** the report is regenerated with new data
-
-#### Scenario: No existing report
-- **WHEN** no report file exists for the date
-- **THEN** a new report is always generated
+## ADDED Requirements
 
 ### Requirement: Context filtering
 `write_report()` SHALL accept a `context` parameter (`"work"` or `"personal"`) and generate a report containing only events matching that context.
@@ -76,4 +42,3 @@ When no context filter is specified via interactive menu, the system SHALL gener
 #### Scenario: No events for a context
 - **WHEN** a date has no events for a given context
 - **THEN** the report file is still generated with a "No activity recorded" message (keeps a trace that generation ran)
-

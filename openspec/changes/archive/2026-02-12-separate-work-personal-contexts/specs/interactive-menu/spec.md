@@ -1,33 +1,4 @@
-# interactive-menu Specification
-
-## Purpose
-TBD - created by syncing from change interactive-menu.
-## Requirements
-### Requirement: Main menu display
-When `daily-log` is run with no arguments on a TTY, it SHALL display an interactive menu using `beaupy.select()` with the following options in order: "Report de hoy", "Report de ayer", "Report de otra fecha", "Borrar report", "Setup", "Salir".
-
-#### Scenario: No arguments on TTY
-- **WHEN** `daily-log` is run with no arguments and stdout is a TTY
-- **THEN** an interactive menu is displayed with arrow-key navigation
-
-#### Scenario: No arguments on non-TTY
-- **WHEN** `daily-log` is run with no arguments and stdout is not a TTY
-- **THEN** today's report is generated directly (current default behavior)
-
-### Requirement: Menu loop
-After an action completes, the menu SHALL be displayed again. The loop continues until the user selects "Salir" or presses Ctrl+C.
-
-#### Scenario: Action completes
-- **WHEN** user selects "Report de hoy" and the report finishes generating
-- **THEN** the menu is displayed again
-
-#### Scenario: Exit via menu
-- **WHEN** user selects "Salir"
-- **THEN** the program exits cleanly
-
-#### Scenario: Exit via Ctrl+C
-- **WHEN** user presses Ctrl+C at any point
-- **THEN** the program exits cleanly without a traceback
+## MODIFIED Requirements
 
 ### Requirement: Today's report
 Selecting "Today's report" SHALL prompt for context selection (work / personal / both), then generate report(s) for today using the standard collection and summarization flow.
@@ -69,19 +40,7 @@ Selecting "Delete report" SHALL prompt for a date using `beaupy.prompt()` with t
 - **WHEN** user selects "Delete report", enters a date, selects "personal", but only work report exists
 - **THEN** a "No personal report for {date}" message is shown
 
-### Requirement: Setup delegation
-Selecting "Setup" SHALL delegate to `setup.py` the same way `--setup` does.
-
-#### Scenario: Setup from menu
-- **WHEN** user selects "Setup"
-- **THEN** the setup wizard runs and upon completion the menu is displayed again
-
-### Requirement: App header
-The menu SHALL be preceded by an app header showing the app name styled with Rich.
-
-#### Scenario: Header display
-- **WHEN** the menu is displayed
-- **THEN** an app header with "daily-log" is shown above the menu options
+## ADDED Requirements
 
 ### Requirement: Context selection prompt
 After selecting a report action (today / yesterday / custom date / delete), the menu SHALL prompt for context using `beaupy.select()` with options: "work" (default), "personal", "both".

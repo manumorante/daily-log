@@ -67,6 +67,7 @@ def collect_shortcut(config: dict, date: str) -> dict:
                 "type": "story",
                 "timestamp": ts,
                 "source": "shortcut",
+                "context": "work",
                 "title": story.get("name", ""),
                 "meta": {
                     "id": story_id,
@@ -86,6 +87,7 @@ def collect_shortcut(config: dict, date: str) -> dict:
                 "type": "epic",
                 "timestamp": epic.get("updated_at", ""),
                 "source": "shortcut",
+                "context": "work",
                 "title": epic.get("name", ""),
                 "meta": {
                     "id": epic.get("id"),

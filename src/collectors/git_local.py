@@ -4,6 +4,7 @@ import os
 import subprocess
 
 from collectors._utils import branch_meta
+from context import WORK_PATH_PATTERNS
 
 
 def _git_user(repo_path: str) -> str:
@@ -93,6 +94,9 @@ def collect_git_local(config: dict, date: str) -> dict:
         author = _git_user(repo_path)
         branch_map = _build_branch_map(repo_path)
 
+        # Detect context based on repo path
+        context = "work" if any(pattern in repo_path for pattern in WORK_PATH_PATTERNS) else "personal"
+
         try:
             cmd = [
                 "git", "-C", repo_path, "log",
@@ -130,6 +134,7 @@ def collect_git_local(config: dict, date: str) -> dict:
                         "type": "commit",
                         "timestamp": parts[3],
                         "source": "git_local",
+                        "context": context,
                         "title": parts[1],
                         "meta": meta,
                     })

@@ -1,13 +1,13 @@
-from .github import collect_github
-from .shortcut import collect_shortcut
 from .git_local import collect_git_local
+from .github import collect_github
 from .wakatime import collect_wakatime
-from .claude_code import collect_claude_code
+from .shortcut import collect_shortcut
+# from .claude_code import collect_claude_code  # Disabled: ambiguous context classification
 
 ALL = [
-    ("GitHub", collect_github),
-    ("Shortcut", collect_shortcut),
-    ("Git Local", collect_git_local),
-    ("WakaTime", collect_wakatime),
-    ("Claude Code", collect_claude_code),
+    ("Git Local", collect_git_local),    # Fast: local git log
+    ("GitHub", collect_github),          # Git remote: API
+    ("WakaTime", collect_wakatime),      # Time tracking: API
+    ("Shortcut", collect_shortcut),      # Project mgmt: API (slowest, multiple calls)
+    # ("Claude Code", collect_claude_code),  # Disabled: ambiguous context classification
 ]

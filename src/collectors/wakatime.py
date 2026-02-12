@@ -4,6 +4,13 @@ import urllib.error
 from datetime import datetime, timezone, timedelta
 from api import wakatime
 from collectors._utils import format_duration
+from context import WORK_PROJECT_KEYWORDS
+
+
+def _detect_context(project_name: str) -> str:
+    """Detect context (work/personal) based on project name."""
+    project_lower = project_name.lower()
+    return "work" if any(keyword.lower() in project_lower for keyword in WORK_PROJECT_KEYWORDS) else "personal"
 
 
 def _unix_to_iso(ts: float, tz_name: str) -> str:
@@ -41,15 +48,17 @@ def collect_wakatime(config: dict, date: str) -> dict:
                 if total <= 0:
                     continue
 
+                project_name = project["name"]
                 # Build language breakdown from project-level data
                 # Summaries give languages at day level, not per-project
                 events.append({
                     "type": "coding_summary",
                     "timestamp": day_start,
                     "source": "wakatime",
-                    "title": f"{project['name']} — {project.get('text', format_duration(total))}",
+                    "context": _detect_context(project_name),
+                    "title": f"{project_name} — {project.get('text', format_duration(total))}",
                     "meta": {
-                        "project": project["name"],
+                        "project": project_name,
                         "total_seconds": total,
                         "human_additions": project.get("human_additions", 0),
                         "human_deletions": project.get("human_deletions", 0),
@@ -72,6 +81,7 @@ def collect_wakatime(config: dict, date: str) -> dict:
                 "type": "coding_block",
                 "timestamp": _unix_to_iso(ts, durations.get("timezone", "UTC")),
                 "source": "wakatime",
+                "context": _detect_context(project),
                 "title": f"{project} ({format_duration(duration)})",
                 "meta": {
                     "project": project,

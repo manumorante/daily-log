@@ -321,12 +321,82 @@ def _has_changes(log_file: Path, raw: str) -> bool:
         return True
 
 
+def _filter_events_by_context(events, ctx):
+    # type: (list, str) -> list
+    """Filter events by context field. Events without context default to personal."""
+    filtered = []
+    for event in events:
+        event_ctx = event.get("context", "personal")
+        if event_ctx != ctx:
+            # Log warning for missing context
+            if "context" not in event:
+                ui.warn(f"Event missing context field (source={event.get('source')}), defaulting to personal")
+        if event_ctx == ctx:
+            filtered.append(event)
+    return filtered
+
+
+def write_report(config, date, events, tasks, ctx, no_ai=False):
+    # type: (dict, str, list, list, str, bool) -> None
+    """Write a single report for the given context."""
+    output_dir = _get_output_dir(config)
+
+    # Report path with context subdirectory
+    year_month = date[:7].replace("-", "/")
+    log_dir = output_dir / ctx / year_month
+    log_file = log_dir / f"{date}.md"
+    short_path = str(log_file).replace(str(Path.home()), "~")
+
+    # Check if we have any events for this context
+    if not events:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file.write_text(f"## Daily report — {date}\n\nNo {ctx} activity recorded.\n")
+        ui.info(f"No {ctx} events: {short_path}")
+        return
+
+    raw = json.dumps(events, indent=2, ensure_ascii=False)
+
+    if log_file.exists() and not _has_changes(log_file, raw):
+        ui.info(f"No new changes ({ctx}): {short_path}")
+        return
+
+    # Generate summary
+    if no_ai:
+        summary = _fallback_summary(events, tasks)
+    else:
+        with ui.spinner(f"Generating {ctx} report..."):
+            summary = generate_summary(config, date, events, tasks)
+
+    # Render and save
+    log_dir.mkdir(parents=True, exist_ok=True)
+    markdown = _render_markdown(date, summary)
+    output = (
+        markdown
+        + "\n---\n\n"
+        + "<details>\n<summary>Raw data</summary>\n\n"
+        + f"```json\n{raw}\n```\n\n"
+        + "</details>\n"
+    )
+    log_file.write_text(output)
+
+    # Show highlight in terminal
+    highlight = summary.get("highlight", "")
+    if highlight:
+        print(f"  [{ctx}] {highlight}")
+    print()
+    ui.done(f"{ctx}: {short_path}")
+
+
 # ─── Actions ─────────────────────────────────────────────────────────────────
 
 
-def run_report(config, date, no_ai=False, dry_run=False):
-    # type: (dict, str, bool, bool) -> None
-    """Collect events and generate a report for the given date."""
+def run_report(config, date, no_ai=False, dry_run=False, context="work"):
+    # type: (dict, str, bool, bool, str) -> None
+    """Collect events and generate report(s) for the given date and context.
+
+    Args:
+        context: "work", "personal", or "both" (default: "work")
+    """
     output_dir = _get_output_dir(config)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -357,9 +427,15 @@ def run_report(config, date, no_ai=False, dry_run=False):
         ui.info("Complete with: daily-log --setup")
         print()
 
+    # Filter collectors based on context
+    collectors_to_run = [
+        (name, collector) for name, collector in COLLECTORS
+        if not (context == "personal" and name == "Shortcut")
+    ]
+
     # Collect data
     collected = []
-    for name, collector in COLLECTORS:
+    for name, collector in collectors_to_run:
         with ui.spinner(name):
             try:
                 data = collector(config, date)
@@ -375,66 +451,57 @@ def run_report(config, date, no_ai=False, dry_run=False):
         collected.append(data)
 
     # Flatten events and estimate tasks
-    events = _collect_events(collected)
-    tasks = estimate_tasks(events)
+    all_events = _collect_events(collected)
 
     if dry_run:
         print()
         ui.info("Collected events:")
-        print(json.dumps(events, indent=2, ensure_ascii=False))
+        print(json.dumps(all_events, indent=2, ensure_ascii=False))
         return
 
-    # Report path
-    year_month = date[:7].replace("-", "/")
-    log_dir = output_dir / year_month
-    log_file = log_dir / f"{date}.md"
-    short_path = str(log_file).replace(str(Path.home()), "~")
+    # Generate reports based on context parameter
+    if context == "both":
+        # Generate both work and personal reports
+        work_events = _filter_events_by_context(all_events, "work")
+        personal_events = _filter_events_by_context(all_events, "personal")
 
-    raw = json.dumps(events, indent=2, ensure_ascii=False)
+        work_tasks = estimate_tasks(work_events)
+        personal_tasks = estimate_tasks(personal_events)
 
-    if log_file.exists() and not _has_changes(log_file, raw):
-        ui.info(f"No new changes: {short_path}")
-        return
-
-    # Generate summary
-    if no_ai:
-        summary = _fallback_summary(events, tasks)
+        write_report(config, date, work_events, work_tasks, "work", no_ai=no_ai)
+        write_report(config, date, personal_events, personal_tasks, "personal", no_ai=no_ai)
     else:
-        with ui.spinner("Generating report..."):
-            summary = generate_summary(config, date, events, tasks)
-
-    # Render and save
-    log_dir.mkdir(parents=True, exist_ok=True)
-    markdown = _render_markdown(date, summary)
-    output = (
-        markdown
-        + "\n---\n\n"
-        + "<details>\n<summary>Raw data</summary>\n\n"
-        + f"```json\n{raw}\n```\n\n"
-        + "</details>\n"
-    )
-    log_file.write_text(output)
-
-    # Show highlight in terminal
-    highlight = summary.get("highlight", "")
-    if highlight:
-        print(f"  {highlight}")
-    print()
-    ui.done(short_path)
+        # Generate single context report
+        filtered_events = _filter_events_by_context(all_events, context)
+        tasks = estimate_tasks(filtered_events)
+        write_report(config, date, filtered_events, tasks, context, no_ai=no_ai)
 
 
-def clear_report(config, date):
-    # type: (dict, str) -> None
-    """Delete the report file for the given date."""
+def clear_report(config, date, context="work"):
+    # type: (dict, str, str) -> None
+    """Delete the report file(s) for the given date and context."""
     output_dir = _get_output_dir(config)
     year_month = date[:7].replace("-", "/")
-    log_file = output_dir / year_month / f"{date}.md"
-    short_path = str(log_file).replace(str(Path.home()), "~")
-    if log_file.exists():
-        log_file.unlink()
-        ui.done(f"Deleted: {short_path}")
+
+    if context == "both":
+        # Delete both work and personal reports
+        for ctx in ["work", "personal"]:
+            log_file = output_dir / ctx / year_month / f"{date}.md"
+            short_path = str(log_file).replace(str(Path.home()), "~")
+            if log_file.exists():
+                log_file.unlink()
+                ui.done(f"Deleted ({ctx}): {short_path}")
+            else:
+                ui.info(f"No {ctx} report for {date}")
     else:
-        ui.info(f"No report for {date}")
+        # Delete single context report
+        log_file = output_dir / context / year_month / f"{date}.md"
+        short_path = str(log_file).replace(str(Path.home()), "~")
+        if log_file.exists():
+            log_file.unlink()
+            ui.done(f"Deleted ({context}): {short_path}")
+        else:
+            ui.info(f"No {context} report for {date}")
 
 
 def run_setup():
@@ -468,6 +535,16 @@ def _menu_loop(config):
         "Exit",
     ]
 
+    context_options = ["work", "personal", "both"]
+
+    def prompt_context():
+        # type: () -> str
+        """Prompt user to select context (work/personal/both)."""
+        try:
+            return select(context_options, cursor="→", cursor_style="blue")
+        except (Abort, KeyboardInterrupt):
+            return None
+
     while True:
         ui.header("daily-log")
         try:
@@ -481,17 +558,25 @@ def _menu_loop(config):
 
         try:
             if choice == "Today's report":
-                run_report(config, today)
+                context = prompt_context()
+                if context:
+                    run_report(config, today, context=context)
             elif choice == "Yesterday's report":
-                run_report(config, yesterday)
+                context = prompt_context()
+                if context:
+                    run_report(config, yesterday, context=context)
             elif choice == "Report for a date":
                 date = prompt("  Date (YYYY-MM-DD)", initial_value=today)
                 if date:
-                    run_report(config, date)
+                    context = prompt_context()
+                    if context:
+                        run_report(config, date, context=context)
             elif choice == "Delete report":
                 date = prompt("  Date (YYYY-MM-DD)", initial_value=today)
                 if date:
-                    clear_report(config, date)
+                    context = prompt_context()
+                    if context:
+                        clear_report(config, date, context=context)
             elif choice == "Setup":
                 run_setup()
         except (Abort, KeyboardInterrupt):
